@@ -61,24 +61,23 @@ export async function getPlans(): Promise<PlanItem[]> {
     const res = await fetch("/api/plans");
     if (res.ok) {
       const data = await res.json();
-      if (data?.success && Array.isArray(data?.plans) && data.plans.length > 0) {
+      if (data?.success && Array.isArray(data?.plans)) {
         const mappedFromDb: PlanItem[] = data.plans.map((p: any) => ({
           id: p.id || `plan-${Date.now()}`,
           name: p.name || "Unnamed Plan",
           product: p.product || p.product_name || "Omnichannel Suite",
-          monthly: typeof p.monthly === "number" ? p.monthly : Number(p.amount) || 0,
-          annual: typeof p.annual === "number" ? p.annual : Math.round((Number(p.amount) || 0) * 10),
-          limit: p.limit || "Unlimited broadcasts",
-          features: typeof p.features === "number" ? p.features : 10,
+          monthly: typeof p.monthly === "number" ? p.monthly : Number(p.monthly) || 0,
+          annual: typeof p.annual === "number" ? p.annual : Number(p.annual) || 0,
+          limit: p.limit || "Standard limits",
+          features: typeof p.features === "number" ? p.features : Number(p.features) || 8,
           status: p.status || "Active",
+          description: p.description || "",
           createdAt: p.created_at || new Date().toISOString(),
+          updatedAt: p.updated_at || new Date().toISOString(),
         }));
 
-        const local = loadLocalPlans();
-        const customCreated = local.filter((l) => !mappedFromDb.some((d) => d.id === l.id || d.name === l.name));
-        const merged = [...mappedFromDb, ...customCreated];
-        saveLocalPlans(merged);
-        return merged;
+        saveLocalPlans(mappedFromDb);
+        return mappedFromDb;
       }
     }
   } catch (err) {
@@ -89,7 +88,7 @@ export async function getPlans(): Promise<PlanItem[]> {
 }
 
 export async function createPlan(input: Partial<PlanItem>): Promise<PlanItem> {
-  const newPlan: PlanItem = {
+  let savedPlan: PlanItem = {
     id: input.id || `plan-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     name: input.name?.trim() || "New Plan",
     product: input.product?.trim() || "Omnichannel Suite",
@@ -104,50 +103,91 @@ export async function createPlan(input: Partial<PlanItem>): Promise<PlanItem> {
   };
 
   try {
-    await fetch("/api/plans", {
+    const res = await fetch("/api/plans", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(newPlan),
+      body: JSON.stringify(savedPlan),
     });
+    if (res.ok) {
+      const data = await res.json();
+      if (data?.success && data?.plan) {
+        savedPlan = {
+          id: data.plan.id,
+          name: data.plan.name,
+          product: data.plan.product,
+          monthly: Number(data.plan.monthly) || 0,
+          annual: Number(data.plan.annual) || 0,
+          limit: data.plan.limit,
+          features: Number(data.plan.features) || 8,
+          status: data.plan.status,
+          description: data.plan.description || "",
+          createdAt: data.plan.created_at,
+          updatedAt: data.plan.updated_at,
+        };
+      }
+    }
   } catch (err) {
     console.warn("Backend POST /api/plans failed (DB offline), persisting to local storage:", err);
   }
 
   const existing = loadLocalPlans();
-  const updated = [newPlan, ...existing.filter((p) => p.id !== newPlan.id)];
+  const updated = [savedPlan, ...existing.filter((p) => p.id !== savedPlan.id)];
   saveLocalPlans(updated);
 
   if (typeof window !== "undefined") {
-    window.dispatchEvent(new CustomEvent("plans-updated", { detail: newPlan }));
+    window.dispatchEvent(new CustomEvent("plans-updated", { detail: savedPlan }));
   }
 
-  return newPlan;
+  return savedPlan;
 }
 
 export async function updatePlan(id: string, updates: Partial<PlanItem>): Promise<PlanItem> {
   const existing = loadLocalPlans();
   const target = existing.find((p) => p.id === id);
-  if (!target) {
-    throw new Error(`Plan with ID ${id} not found`);
-  }
 
-  const updatedPlan: PlanItem = {
-    ...target,
-    ...updates,
+  let updatedPlan: PlanItem = {
+    ...(target || {}),
+    id,
+    name: updates.name || target?.name || "Plan",
+    product: updates.product || target?.product || "Omnichannel Suite",
+    monthly: updates.monthly ?? target?.monthly ?? 0,
+    annual: updates.annual ?? target?.annual ?? 0,
+    limit: updates.limit || target?.limit || "Standard limits",
+    features: updates.features ?? target?.features ?? 8,
+    status: (updates.status || target?.status || "Active") as PlanItem["status"],
+    description: updates.description ?? target?.description ?? "",
     updatedAt: new Date().toISOString(),
   };
 
   try {
-    await fetch(`/api/plans/${encodeURIComponent(id)}`, {
+    const res = await fetch(`/api/plans/${encodeURIComponent(id)}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(updatedPlan),
+      body: JSON.stringify(updates),
     });
+    if (res.ok) {
+      const data = await res.json();
+      if (data?.success && data?.plan) {
+        updatedPlan = {
+          id: data.plan.id,
+          name: data.plan.name,
+          product: data.plan.product,
+          monthly: Number(data.plan.monthly) || 0,
+          annual: Number(data.plan.annual) || 0,
+          limit: data.plan.limit,
+          features: Number(data.plan.features) || 8,
+          status: data.plan.status,
+          description: data.plan.description || "",
+          createdAt: data.plan.created_at,
+          updatedAt: data.plan.updated_at,
+        };
+      }
+    }
   } catch (err) {
     console.warn("Backend PUT /api/plans failed, persisting to local storage:", err);
   }
 
-  const updatedList = existing.map((p) => (p.id === id ? updatedPlan : p));
+  const updatedList = existing.map((p) => (p.id === id ? { ...p, ...updatedPlan } : p));
   saveLocalPlans(updatedList);
 
   if (typeof window !== "undefined") {

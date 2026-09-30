@@ -15,21 +15,27 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Methods": "POST,OPTIONS",
 };
 
-async function resolveOrgUser(identifier: string): Promise<{ orgUserId: string; orgUserName: string | null } | null> {
-  const sql = `
-    SELECT client_user_id, customer_name 
-    FROM public.customers_details 
-    WHERE id::text = $1 OR LOWER(client_user_id) = LOWER($1)
-    LIMIT 1;
-  `;
-  const res = await query<{ client_user_id: string; customer_name: string | null }>(sql, [identifier]);
-  if (res.rows.length > 0) {
-    return {
-      orgUserId: res.rows[0].client_user_id,
-      orgUserName: res.rows[0].customer_name,
-    };
+function normalizeRole(roleInput?: string): "Admin" | "Manager" | "Agent" | "Member" {
+  if (!roleInput) return "Member";
+  const normalized = roleInput.trim().toLowerCase();
+  if (normalized === "admin") return "Admin";
+  if (
+    normalized === "manager" ||
+    normalized.includes("lead") ||
+    normalized.includes("head") ||
+    normalized.includes("director")
+  ) {
+    return "Manager";
   }
-  return null;
+  if (
+    normalized === "agent" ||
+    normalized.includes("support") ||
+    normalized.includes("specialist") ||
+    normalized.includes("success")
+  ) {
+    return "Agent";
+  }
+  return "Member";
 }
 
 export async function createTeamMemberHandler(
@@ -62,25 +68,21 @@ export async function createTeamMemberHandler(
       };
     }
 
-    const rawCustomerId = (
+    const orgUserId = (
       payload.customerId ||
       payload.orgUserId ||
       payload.org_user_id ||
-      ""
+      "superblock"
+    ).trim() || "superblock";
+
+    const orgUserName = (
+      payload.orgUserName ||
+      payload.org_user_name ||
+      "Superblock HQ"
     ).trim();
+
     const name = (payload.name || "").trim();
     const email = (payload.email || "").trim().toLowerCase();
-
-    if (!rawCustomerId) {
-      return {
-        statusCode: 400,
-        headers: CORS_HEADERS,
-        body: JSON.stringify({
-          success: false,
-          error: "Missing required field: 'customerId'",
-        } as CreateTeamMemberResponse),
-      };
-    }
 
     if (!name) {
       return {
@@ -104,23 +106,34 @@ export async function createTeamMemberHandler(
       };
     }
 
-    const resolved = await resolveOrgUser(rawCustomerId);
-    if (!resolved) {
+    // Check if team member already exists with this email
+    const existing = await query<{ id: string; email: string }>(
+      "SELECT id::text, email FROM public.team_members WHERE LOWER(email) = LOWER($1) LIMIT 1;",
+      [email]
+    );
+    if (existing.rows.length > 0) {
       return {
-        statusCode: 404,
+        statusCode: 409,
         headers: CORS_HEADERS,
         body: JSON.stringify({
           success: false,
-          error: `Customer not found for identifier: '${rawCustomerId}'`,
+          error: `A team member with email '${email}' already exists`,
         } as CreateTeamMemberResponse),
       };
     }
 
-    const orgUserId = resolved.orgUserId;
-    const orgUserName = payload.orgUserName || payload.org_user_name || resolved.orgUserName;
-    const teamUserId = payload.teamUserId || payload.team_user_id || `tm_${crypto.randomUUID().slice(0, 8)}`;
+
+
+    const randStr = crypto.randomBytes(3).toString("hex");
+    const teamUserId = (
+      payload.teamUserId ||
+      payload.team_user_id ||
+      (payload as any).id ||
+      `tm_${Date.now()}_${randStr}`
+    ).trim();
+
+    const role = normalizeRole(payload.role);
     const avatarUrl = payload.avatarUrl || payload.avatar_url || null;
-    const role = payload.role || "Agent";
     const passwordHash = payload.passwordHash || payload.password_hash || null;
 
     const insertSql = `
@@ -133,7 +146,7 @@ export async function createTeamMemberHandler(
       )
       RETURNING 
         id::text, team_user_id, org_user_id, org_user_name, name, email,
-        avatar_url, role, password_hash, created_at;
+        avatar_url, role, password_hash, created_at::text;
     `;
 
     const result = await query<TeamMemberRecord>(insertSql, [

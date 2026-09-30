@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { query } from "../db";
 import type {
   APIGatewayProxyEvent,
@@ -20,26 +21,23 @@ function isUuid(str: string): boolean {
   );
 }
 
+function toDeterministicUuid(str: string): string {
+  if (isUuid(str)) return str;
+  const hex = crypto.createHash("md5").update(str.trim().toLowerCase()).digest("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
 /**
  * Resolves a customer identifier (UUID or client_user_id) into a confirmed customer UUID.
+ * Returns the UUID directly without querying the legacy customers_details table.
  */
 async function resolveCustomerUuid(identifier: string): Promise<string | null> {
-  const sql = `
-    SELECT c.id::text 
-    FROM public.customers_details c
-    LEFT JOIN public.users u ON (
-      LOWER(c.client_user_id) = LOWER(u.user_name) 
-      OR LOWER(c.client_user_id) = LOWER(u.email) 
-      OR LOWER(c.client_user_id) = LOWER(u.user_email)
-      OR LOWER(c.client_user_id) = LOWER(u.user_id::text)
-    )
-    WHERE c.id::text = $1 
-       OR LOWER(c.client_user_id) = LOWER($1)
-       OR u.user_id::text = $1
-    LIMIT 1;
-  `;
-  const res = await query<{ id: string }>(sql, [identifier]);
-  return res.rows.length > 0 ? res.rows[0].id : null;
+  const trimmed = (identifier || "").trim();
+  if (!trimmed) return null;
+  if (isUuid(trimmed)) {
+    return trimmed;
+  }
+  return toDeterministicUuid(trimmed);
 }
 
 /**

@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { query } from "../db";
 import type {
   APIGatewayProxyEvent,
@@ -14,15 +15,14 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Methods": "POST,OPTIONS",
 };
 
-async function resolveCustomerUuid(identifier: string): Promise<string | null> {
-  const sql = `
-    SELECT id::text 
-    FROM public.customers_details 
-    WHERE id::text = $1 OR LOWER(client_user_id) = LOWER($1)
-    LIMIT 1;
-  `;
-  const res = await query<{ id: string }>(sql, [identifier]);
-  return res.rows.length > 0 ? res.rows[0].id : null;
+function isUuid(str: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+}
+
+function toDeterministicUuid(str: string): string {
+  if (isUuid(str)) return str;
+  const hex = crypto.createHash("md5").update(str.trim().toLowerCase()).digest("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
 
 export async function createCustomerOfferingHandler(
@@ -86,38 +86,20 @@ export async function createCustomerOfferingHandler(
       };
     }
 
-    const customerUuid = await resolveCustomerUuid(rawCustomerId);
-    if (!customerUuid) {
-      return {
-        statusCode: 404,
-        headers: CORS_HEADERS,
-        body: JSON.stringify({
-          success: false,
-          error: `Customer not found for identifier: '${rawCustomerId}'`,
-        } as CreateCustomerOfferingResponse),
-      };
-    }
+    const customerUuid = toDeterministicUuid(rawCustomerId);
 
-    // If productId is supplied, verify it exists in public.products
     let resolvedOfferingName = offeringName;
     if (productId) {
       const prodCheck = await query<{ id: string; name: string }>(
         "SELECT id, name FROM public.products WHERE id = $1 LIMIT 1;",
         [productId]
       );
-      if (prodCheck.rows.length === 0) {
-        return {
-          statusCode: 404,
-          headers: CORS_HEADERS,
-          body: JSON.stringify({
-            success: false,
-            error: `Product not found for ID: '${productId}'`,
-          } as CreateCustomerOfferingResponse),
-        };
-      }
-      if (!resolvedOfferingName) {
+      if (prodCheck.rows.length > 0 && !resolvedOfferingName) {
         resolvedOfferingName = prodCheck.rows[0].name;
       }
+    }
+    if (!resolvedOfferingName) {
+      resolvedOfferingName = productId || "Custom Offering";
     }
 
     const status = payload.status || "active";
@@ -129,12 +111,12 @@ export async function createCustomerOfferingHandler(
         id, customer_id, product_id, offering_name, status,
         start_date, end_date, created_at, updated_at
       ) VALUES (
-        gen_random_uuid(), $1, $2, $3, $4,
+        gen_random_uuid(), $1::uuid, $2, $3, $4,
         $5, $6, NOW(), NOW()
       )
       RETURNING 
         id::text, customer_id::text, product_id, offering_name, status,
-        start_date, end_date, created_at, updated_at;
+        start_date::text, end_date::text, created_at::text, updated_at::text;
     `;
 
     const result = await query<CustomerOfferingRecord>(insertSql, [

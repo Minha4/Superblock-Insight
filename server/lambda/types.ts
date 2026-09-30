@@ -397,6 +397,28 @@ export interface CreateTeamMemberResponse {
   error?: string;
 }
 
+export interface UpdateTeamMemberInput {
+  name?: string;
+  email?: string;
+  role?: string;
+  avatarUrl?: string | null;
+  avatar_url?: string | null;
+  department?: string;
+  status?: string;
+}
+
+export interface UpdateTeamMemberResponse {
+  success: boolean;
+  teamMember?: TeamMemberRecord;
+  error?: string;
+}
+
+export interface DeleteTeamMemberResponse {
+  success: boolean;
+  id?: string;
+  error?: string;
+}
+
 /**
  * public.products
  */
@@ -472,6 +494,39 @@ export interface CreateProductResponse {
   error?: string;
 }
 
+export interface UpdateProductInput {
+  name?: string;
+  category?: string;
+  billing?: string;
+  model?: string;
+  price?: number;
+  cost?: number;
+  currency?: string;
+  active?: boolean;
+  status?: string;
+  description?: string;
+  sku?: string | null;
+  margin?: string | null;
+  taxRate?: number;
+  tax_rate?: number;
+  unit?: string;
+  trackInventory?: boolean;
+  track_inventory?: boolean;
+  stock?: number;
+}
+
+export interface UpdateProductResponse {
+  success: boolean;
+  product?: ProductRecord;
+  error?: string;
+}
+
+export interface DeleteProductResponse {
+  success: boolean;
+  id?: string;
+  error?: string;
+}
+
 /**
  * public.subscriptions
  */
@@ -488,6 +543,7 @@ export interface SubscriptionRecord {
   created_at: string | null;
   updated_at: string | null;
   plan_name?: string | null;
+  customer_name?: string | null;
 }
 
 export interface GetSubscriptionsResponse {
@@ -499,24 +555,64 @@ export interface GetSubscriptionsResponse {
 }
 
 export interface CreateSubscriptionInput {
+  id?: string;
   customerId?: string;
   customer_id?: string;
-  planId: string;
+  customer?: string;
+  customer_name?: string;
+  planId?: string;
   plan_id?: string;
+  plan?: string;
   status?: string | null;
   startDate?: string | null;
   start_date?: string | null;
   endDate?: string | null;
   end_date?: string | null;
+  renewalDate?: string | null;
   amount?: number | null;
+  mrr?: number | null;
   currency?: string | null;
   billingInterval?: string | null;
   billing_interval?: string | null;
+  cycle?: string | null;
+  autoRenewal?: boolean;
 }
 
 export interface CreateSubscriptionResponse {
   success: boolean;
   subscription?: SubscriptionRecord;
+  error?: string;
+}
+
+export interface UpdateSubscriptionInput {
+  customer?: string | null;
+  customer_name?: string | null;
+  planId?: string;
+  plan_id?: string;
+  plan?: string;
+  status?: string;
+  startDate?: string;
+  start_date?: string;
+  endDate?: string;
+  end_date?: string;
+  renewalDate?: string;
+  amount?: number;
+  mrr?: number;
+  currency?: string;
+  billingInterval?: string;
+  billing_interval?: string;
+  cycle?: string;
+}
+
+export interface UpdateSubscriptionResponse {
+  success: boolean;
+  subscription?: SubscriptionRecord;
+  error?: string;
+}
+
+export interface DeleteSubscriptionResponse {
+  success: boolean;
+  id?: string;
   error?: string;
 }
 
@@ -692,6 +788,48 @@ export interface CreateActivityInput {
 export interface CreateActivityResponse {
   success: boolean;
   activity?: ActivityRecord;
+  error?: string;
+}
+
+/**
+ * public.plans
+ */
+export interface PlanRecord {
+  id: string;
+  name: string;
+  product: string;
+  monthly: number;
+  annual: number;
+  limit: string;
+  features: number;
+  status: string;
+  description?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface GetPlansResponse {
+  success: boolean;
+  count: number;
+  plans: PlanRecord[];
+  error?: string;
+}
+
+export interface CreatePlanInput {
+  id?: string;
+  name: string;
+  product?: string;
+  monthly?: number;
+  annual?: number;
+  limit?: string;
+  features?: number;
+  status?: string;
+  description?: string;
+}
+
+export interface CreatePlanResponse {
+  success: boolean;
+  plan?: PlanRecord;
   error?: string;
 }
 

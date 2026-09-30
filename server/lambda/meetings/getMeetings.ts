@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { query } from "../db";
 import type {
   APIGatewayProxyEvent,
@@ -20,6 +21,12 @@ function isUuid(str: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
     str
   );
+}
+
+function toDeterministicUuid(str: string): string {
+  if (isUuid(str)) return str;
+  const hex = crypto.createHash("md5").update(str.trim().toLowerCase()).digest("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
 
 /**
@@ -61,6 +68,7 @@ export async function getMeetingsHandler(
     }
 
     let meetings: MeetingRecord[] = [];
+    const targetUuid = isUuid(customerId) ? customerId : toDeterministicUuid(customerId);
 
     const sql = `
       SELECT 
@@ -76,26 +84,10 @@ export async function getMeetingsHandler(
         m.created_at,
         m.updated_at
       FROM public.meetings m
-      WHERE m.customer_id::text = $1
-         OR m.customer_id IN (
-           SELECT c.id 
-           FROM public.customers_details c
-           LEFT JOIN public.users u ON (
-             LOWER(c.client_user_id) = LOWER(u.user_name) 
-             OR LOWER(c.client_user_id) = LOWER(u.email) 
-             OR LOWER(c.client_user_id) = LOWER(u.user_email)
-             OR LOWER(c.client_user_id) = LOWER(u.user_id::text)
-           )
-           WHERE c.id::text = $1 
-              OR LOWER(c.client_user_id) = LOWER($1)
-              OR u.user_id::text = $1
-              OR LOWER(u.user_name) = LOWER($1)
-              OR LOWER(u.email) = LOWER($1)
-              OR LOWER(u.user_email) = LOWER($1)
-         )
+      WHERE m.customer_id::text = $1 OR m.customer_id::text = $2
       ORDER BY m.meeting_date DESC NULLS LAST, m.created_at DESC;
     `;
-    const result = await query<MeetingRecord>(sql, [customerId]);
+    const result = await query<MeetingRecord>(sql, [customerId, targetUuid]);
     meetings = result.rows;
 
     const responseBody: GetMeetingsResponse = {

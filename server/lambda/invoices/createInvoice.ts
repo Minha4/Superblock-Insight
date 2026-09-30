@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { query } from "../db";
 import type {
   APIGatewayProxyEvent,
@@ -6,13 +7,19 @@ import type {
 } from "../types";
 
 export interface CreateInvoiceInput {
-  customerId: string;
+  customerId?: string;
+  customer_id?: string;
   invoiceNumber?: string;
+  invoice_number?: string;
   amount: number;
   currency?: string;
   status?: string;
   issueDate?: string;
+  issue_date?: string;
   dueDate?: string;
+  due_date?: string;
+  paidDate?: string | null;
+  paid_date?: string | null;
   description?: string;
 }
 
@@ -33,27 +40,23 @@ function isUuid(str: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
 }
 
+function toDeterministicUuid(str: string): string {
+  if (isUuid(str)) return str;
+  const hex = crypto.createHash("md5").update(str.trim().toLowerCase()).digest("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
+/**
+ * Resolves a customer identifier into a confirmed customer UUID.
+ * Returns the UUID directly without querying the legacy customers_details table.
+ */
 async function resolveCustomerUuid(identifier: string): Promise<string | null> {
-  const sql = `
-    SELECT c.id::text 
-    FROM public.customers_details c
-    LEFT JOIN public.users u ON (
-      LOWER(c.client_user_id) = LOWER(u.user_name) 
-      OR LOWER(c.client_user_id) = LOWER(u.email) 
-      OR LOWER(c.client_user_id) = LOWER(u.user_email)
-      OR LOWER(c.client_user_id) = LOWER(u.user_id::text)
-    )
-    WHERE c.id::text = $1 
-       OR LOWER(c.client_user_id) = LOWER($1)
-       OR u.user_id::text = $1
-       OR LOWER(u.user_name) = LOWER($1)
-       OR LOWER(u.email) = LOWER($1)
-       OR LOWER(u.user_email) = LOWER($1)
-    ORDER BY (c.id::text = $1) DESC, (c.client_user_id = u.user_name) DESC
-    LIMIT 1;
-  `;
-  const res = await query<{ id: string }>(sql, [identifier]);
-  return res.rows.length > 0 ? res.rows[0].id : null;
+  const trimmed = (identifier || "").trim();
+  if (!trimmed) return null;
+  if (isUuid(trimmed)) {
+    return trimmed;
+  }
+  return toDeterministicUuid(trimmed);
 }
 
 /**
@@ -89,7 +92,7 @@ export async function createInvoiceHandler(
       };
     }
 
-    const rawCustomerId = (payload.customerId || (payload as any).customer_id || "").trim();
+    const rawCustomerId = (payload.customerId || payload.customer_id || "").trim();
     if (!rawCustomerId) {
       return {
         statusCode: 400,
@@ -97,6 +100,29 @@ export async function createInvoiceHandler(
         body: JSON.stringify({
           success: false,
           error: "Missing required field: 'customerId'",
+        } as CreateInvoiceResponse),
+      };
+    }
+
+    if (payload.amount === undefined || payload.amount === null) {
+      return {
+        statusCode: 400,
+        headers: CORS_HEADERS,
+        body: JSON.stringify({
+          success: false,
+          error: "Amount must be a non-negative number",
+        } as CreateInvoiceResponse),
+      };
+    }
+
+    const amount = Number(payload.amount);
+    if (isNaN(amount) || amount < 0) {
+      return {
+        statusCode: 400,
+        headers: CORS_HEADERS,
+        body: JSON.stringify({
+          success: false,
+          error: "Amount must be a non-negative number",
         } as CreateInvoiceResponse),
       };
     }
@@ -114,26 +140,20 @@ export async function createInvoiceHandler(
     }
     const customerId = resolvedCustomerId;
 
-    const amount = Number(payload.amount);
-    if (isNaN(amount) || amount < 0) {
-      return {
-        statusCode: 400,
-        headers: CORS_HEADERS,
-        body: JSON.stringify({
-          success: false,
-          error: "Amount must be a non-negative number",
-        } as CreateInvoiceResponse),
-      };
-    }
-
-    const invoiceNumber = (payload.invoiceNumber || (payload as any).invoice_number || "").trim() ||
-      `INV-${Date.now().toString(36).toUpperCase()}`;
+    const invoiceNumber = (
+      payload.invoiceNumber ||
+      payload.invoice_number ||
+      (payload as any).id ||
+      ""
+    ).trim() || `INV-${Date.now().toString(36).toUpperCase()}`;
 
     const currency = (payload.currency || "INR").trim().toUpperCase();
     const status = (payload.status || "Sent").trim();
-    const description = (payload.description || "Platform & Software Services").trim();
-    const issueDate = payload.issueDate || (payload as any).issue_date || new Date().toISOString().split("T")[0];
-    const dueDate = payload.dueDate || (payload as any).due_date || new Date(Date.now() + 14 * 86400000).toISOString().split("T")[0];
+    const description = (payload.description || (payload as any).product || "Platform & Software Services").trim();
+    const issueDate = payload.issueDate || payload.issue_date || (payload as any).date || new Date().toISOString().split("T")[0];
+    const dueDate = payload.dueDate || payload.due_date || new Date(Date.now() + 14 * 86400000).toISOString().split("T")[0];
+    const rawPaidDate = payload.paidDate || payload.paid_date || (payload as any).paymentDate;
+    const paidDate = rawPaidDate ? String(rawPaidDate).slice(0, 10) : (status.toLowerCase() === "paid" ? String(issueDate).slice(0, 10) : null);
 
     const insertSql = `
       INSERT INTO public.invoices (
@@ -144,9 +164,10 @@ export async function createInvoiceHandler(
         currency,
         issue_date,
         due_date,
+        paid_date,
         description
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       RETURNING 
         id::text,
         customer_id::text,
@@ -154,9 +175,9 @@ export async function createInvoiceHandler(
         status,
         amount::numeric,
         currency,
-        issue_date,
-        due_date,
-        paid_date,
+        issue_date::text,
+        due_date::text,
+        paid_date::text,
         description,
         created_at,
         updated_at;
@@ -170,15 +191,22 @@ export async function createInvoiceHandler(
       currency,
       issueDate,
       dueDate,
+      paidDate,
       description,
     ]);
+
+    const row = result.rows[0];
+    const createdInvoice: InvoiceRecord = {
+      ...row,
+      amount: Number(row.amount),
+    };
 
     return {
       statusCode: 201,
       headers: CORS_HEADERS,
       body: JSON.stringify({
         success: true,
-        invoice: result.rows[0],
+        invoice: createdInvoice,
       } as CreateInvoiceResponse),
     };
   } catch (error: any) {

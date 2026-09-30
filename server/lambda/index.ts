@@ -19,14 +19,26 @@ import { getTicketsHandler } from "./tickets/getTickets";
 import { createTicketHandler } from "./tickets/createTicket";
 import { getTeamMembersHandler } from "./teamMembers/getTeamMembers";
 import { createTeamMemberHandler } from "./teamMembers/createTeamMember";
+import { updateTeamMemberHandler } from "./teamMembers/updateTeamMember";
+import { deleteTeamMemberHandler } from "./teamMembers/deleteTeamMember";
 import { getProductsHandler } from "./products/getProducts";
 import { createProductHandler } from "./products/createProduct";
+import { updateProductHandler } from "./products/updateProduct";
+import { deleteProductHandler } from "./products/deleteProduct";
 import { getSubscriptionsHandler } from "./subscriptions/getSubscriptions";
 import { createSubscriptionHandler } from "./subscriptions/createSubscription";
+import { updateSubscriptionHandler } from "./subscriptions/updateSubscription";
+import { deleteSubscriptionHandler } from "./subscriptions/deleteSubscription";
 import { getCustomerOfferingsHandler } from "./customerOfferings/getCustomerOfferings";
 import { createCustomerOfferingHandler } from "./customerOfferings/createCustomerOffering";
 import { getInvoicesHandler } from "./invoices/getInvoices";
 import { createInvoiceHandler } from "./invoices/createInvoice";
+import { updateInvoiceHandler } from "./invoices/updateInvoice";
+import { deleteInvoiceHandler } from "./invoices/deleteInvoice";
+import { getPlansHandler } from "./plans/getPlans";
+import { createPlanHandler } from "./plans/createPlan";
+import { updatePlanHandler } from "./plans/updatePlan";
+import { deletePlanHandler } from "./plans/deletePlan";
 import { getUsageMetricsHandler } from "./usageMetrics/getUsageMetrics";
 import { createUsageMetricHandler } from "./usageMetrics/createUsageMetric";
 import { getActivitiesHandler } from "./activities/getActivities";
@@ -56,14 +68,26 @@ export { getTicketsHandler } from "./tickets/getTickets";
 export { createTicketHandler } from "./tickets/createTicket";
 export { getTeamMembersHandler } from "./teamMembers/getTeamMembers";
 export { createTeamMemberHandler } from "./teamMembers/createTeamMember";
+export { updateTeamMemberHandler } from "./teamMembers/updateTeamMember";
+export { deleteTeamMemberHandler } from "./teamMembers/deleteTeamMember";
 export { getProductsHandler } from "./products/getProducts";
 export { createProductHandler } from "./products/createProduct";
+export { updateProductHandler } from "./products/updateProduct";
+export { deleteProductHandler } from "./products/deleteProduct";
 export { getSubscriptionsHandler } from "./subscriptions/getSubscriptions";
 export { createSubscriptionHandler } from "./subscriptions/createSubscription";
+export { updateSubscriptionHandler } from "./subscriptions/updateSubscription";
+export { deleteSubscriptionHandler } from "./subscriptions/deleteSubscription";
 export { getCustomerOfferingsHandler } from "./customerOfferings/getCustomerOfferings";
 export { createCustomerOfferingHandler } from "./customerOfferings/createCustomerOffering";
 export { getInvoicesHandler } from "./invoices/getInvoices";
 export { createInvoiceHandler } from "./invoices/createInvoice";
+export { updateInvoiceHandler } from "./invoices/updateInvoice";
+export { deleteInvoiceHandler } from "./invoices/deleteInvoice";
+export { getPlansHandler } from "./plans/getPlans";
+export { createPlanHandler } from "./plans/createPlan";
+export { updatePlanHandler } from "./plans/updatePlan";
+export { deletePlanHandler } from "./plans/deletePlan";
 export { getUsageMetricsHandler } from "./usageMetrics/getUsageMetrics";
 export { createUsageMetricHandler } from "./usageMetrics/createUsageMetric";
 export { getActivitiesHandler } from "./activities/getActivities";
@@ -271,17 +295,33 @@ export async function handler(
         (rawPath.endsWith("/team-members") ||
           rawPath.includes("/team-members/") ||
           rawPath.endsWith("/team_members") ||
-          rawPath.includes("/team_members/"))) ||
-      (method === "GET" && (action === "team_members" || action === "team-members" || action === "teammembers"))
+          rawPath.includes("/team_members/") ||
+          rawPath.endsWith("/team") ||
+          rawPath.includes("/team/"))) ||
+      (method === "GET" && (action === "team_members" || action === "team-members" || action === "teammembers" || action === "team"))
     ) {
       return await getTeamMembersHandler(event);
     }
     if (
       (method === "POST" &&
-        (rawPath.endsWith("/team-members") || rawPath.endsWith("/team_members"))) ||
-      (method === "POST" && (action === "team_members" || action === "team-members" || action === "teammembers"))
+        (rawPath.endsWith("/team-members") || rawPath.endsWith("/team_members") || rawPath.endsWith("/team"))) ||
+      (method === "POST" && (action === "team_members" || action === "team-members" || action === "teammembers" || action === "team"))
     ) {
       return await createTeamMemberHandler(event);
+    }
+    if (
+      (method === "PUT" &&
+        (rawPath.includes("/team-members") || rawPath.includes("/team_members") || rawPath.includes("/team"))) ||
+      (method === "PUT" && (action === "team_members" || action === "team-members" || action === "team"))
+    ) {
+      return await updateTeamMemberHandler(event);
+    }
+    if (
+      (method === "DELETE" &&
+        (rawPath.includes("/team-members") || rawPath.includes("/team_members") || rawPath.includes("/team"))) ||
+      (method === "DELETE" && (action === "team_members" || action === "team-members" || action === "team"))
+    ) {
+      return await deleteTeamMemberHandler(event);
     }
 
     // 8. Products API
@@ -297,6 +337,18 @@ export async function handler(
     ) {
       return await createProductHandler(event);
     }
+    if (
+      (method === "PUT" && (rawPath.includes("/products/") || rawPath.endsWith("/products"))) ||
+      (method === "PUT" && (action === "products" || action === "update_product"))
+    ) {
+      return await updateProductHandler(event);
+    }
+    if (
+      (method === "DELETE" && (rawPath.includes("/products/") || rawPath.endsWith("/products"))) ||
+      (method === "DELETE" && (action === "products" || action === "delete_product"))
+    ) {
+      return await deleteProductHandler(event);
+    }
 
     // 9. Subscriptions API
     if (
@@ -311,6 +363,18 @@ export async function handler(
       (method === "POST" && (action === "subscriptions" || action === "create_subscription"))
     ) {
       return await createSubscriptionHandler(event);
+    }
+    if (
+      (method === "PUT" && (rawPath.includes("/subscriptions/") || rawPath.endsWith("/subscriptions"))) ||
+      (method === "PUT" && (action === "subscriptions" || action === "update_subscription"))
+    ) {
+      return await updateSubscriptionHandler(event);
+    }
+    if (
+      (method === "DELETE" && (rawPath.includes("/subscriptions/") || rawPath.endsWith("/subscriptions"))) ||
+      (method === "DELETE" && (action === "subscriptions" || action === "delete_subscription"))
+    ) {
+      return await deleteSubscriptionHandler(event);
     }
 
     // 10. Customer Offerings API
@@ -348,6 +412,44 @@ export async function handler(
       (method === "POST" && (action === "invoices" || action === "create_invoice"))
     ) {
       return await createInvoiceHandler(event);
+    }
+    if (
+      (method === "PUT" || method === "PATCH") &&
+      (rawPath.endsWith("/invoices") || rawPath.includes("/invoices/"))
+    ) {
+      return await updateInvoiceHandler(event);
+    }
+    if (
+      method === "DELETE" &&
+      (rawPath.endsWith("/invoices") || rawPath.includes("/invoices/"))
+    ) {
+      return await deleteInvoiceHandler(event);
+    }
+
+    // 12. Plans API
+    if (
+      (method === "GET" && (rawPath.endsWith("/plans") || rawPath.includes("/plans/"))) ||
+      (method === "GET" && (action === "plans" || action === "get_plans"))
+    ) {
+      return await getPlansHandler(event);
+    }
+    if (
+      (method === "POST" && rawPath.endsWith("/plans")) ||
+      (method === "POST" && (action === "plans" || action === "create_plan"))
+    ) {
+      return await createPlanHandler(event);
+    }
+    if (
+      (method === "PUT" || method === "PATCH") &&
+      (rawPath.endsWith("/plans") || rawPath.includes("/plans/"))
+    ) {
+      return await updatePlanHandler(event);
+    }
+    if (
+      method === "DELETE" &&
+      (rawPath.endsWith("/plans") || rawPath.includes("/plans/"))
+    ) {
+      return await deletePlanHandler(event);
     }
 
     // 12. Usage Metrics API

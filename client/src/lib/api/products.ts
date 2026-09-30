@@ -1,50 +1,67 @@
-import { products as seedProducts } from "@/data/mockData";
-
 export interface ProductItem {
   id: string;
   name: string;
   category: string;
   model: string;
-  status: "Active" | "Beta" | "Archived" | "Draft";
+  status: "Active" | "Private" | "Archived";
   plans: number;
   customers: number;
-  description?: string;
-  price?: number;
-  createdAt?: string;
+  description: string;
+  price: number;
+  createdAt: string;
   updatedAt?: string;
 }
 
-const STORAGE_KEY = "sb_products_catalog";
+const STORAGE_KEY = "analytics_studio_custom_products";
 
-function getSeedProducts(): ProductItem[] {
-  return seedProducts.map((p, idx) => ({
-    id: `prod-seed-${idx + 1}`,
-    name: p.name,
-    category: p.category,
-    model: p.model,
-    status: (p.status as ProductItem["status"]) || "Active",
-    plans: p.plans,
-    customers: p.customers,
-    description: `${p.category} capabilities billed through a ${p.model.toLowerCase()} model.`,
-    price: 0,
-    createdAt: new Date().toISOString(),
-  }));
-}
+const DEFAULT_PRODUCTS: ProductItem[] = [
+  {
+    id: "prod-omnichannel",
+    name: "Omnichannel Suite",
+    category: "Communication",
+    model: "Usage based",
+    status: "Active",
+    plans: 4,
+    customers: 24,
+    description: "Complete unified communications for WhatsApp, SMS, Email, and Voice.",
+    price: 3499,
+    createdAt: "2024-01-15T10:00:00Z",
+  },
+  {
+    id: "prod-ai-agents",
+    name: "AI Agent Platform",
+    category: "Automation",
+    model: "Tiered",
+    status: "Active",
+    plans: 3,
+    customers: 18,
+    description: "Autonomous customer service bots with CRM integration and intent routing.",
+    price: 5999,
+    createdAt: "2024-02-01T10:00:00Z",
+  },
+  {
+    id: "prod-analytics-pro",
+    name: "Analytics Studio Pro",
+    category: "Analytics",
+    model: "Flat fee",
+    status: "Active",
+    plans: 2,
+    customers: 12,
+    description: "Deep funnel analytics, custom reporting, and predictive cohort tracking.",
+    price: 2499,
+    createdAt: "2024-03-01T10:00:00Z",
+  },
+];
 
 function loadLocalProducts(): ProductItem[] {
-  if (typeof window === "undefined") return getSeedProducts();
+  if (typeof window === "undefined") return DEFAULT_PRODUCTS;
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      const initial = getSeedProducts();
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(initial));
-      return initial;
-    }
+    if (!raw) return DEFAULT_PRODUCTS;
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) && parsed.length > 0 ? parsed : getSeedProducts();
-  } catch (err) {
-    console.warn("Could not read products from localStorage:", err);
-    return getSeedProducts();
+    return Array.isArray(parsed) && parsed.length > 0 ? parsed : DEFAULT_PRODUCTS;
+  } catch {
+    return DEFAULT_PRODUCTS;
   }
 }
 
@@ -62,7 +79,7 @@ export async function getProducts(): Promise<ProductItem[]> {
     const res = await fetch("/api/products");
     if (res.ok) {
       const data = await res.json();
-      if (data?.success && Array.isArray(data?.products) && data.products.length > 0) {
+      if (data?.success && Array.isArray(data?.products)) {
         const mappedFromDb: ProductItem[] = data.products.map((p: any) => ({
           id: p.id || `prod-${Date.now()}`,
           name: p.name || "Unnamed Product",
@@ -74,14 +91,11 @@ export async function getProducts(): Promise<ProductItem[]> {
           description: p.description || "",
           price: typeof p.price === "number" ? p.price : 0,
           createdAt: p.created_at || new Date().toISOString(),
+          updatedAt: p.updated_at || new Date().toISOString(),
         }));
 
-        // Merge with any local user-created additions
-        const local = loadLocalProducts();
-        const customCreated = local.filter((l) => !mappedFromDb.some((d) => d.id === l.id || d.name === l.name));
-        const merged = [...mappedFromDb, ...customCreated];
-        saveLocalProducts(merged);
-        return merged;
+        saveLocalProducts(mappedFromDb);
+        return mappedFromDb;
       }
     }
   } catch (err) {
@@ -92,7 +106,7 @@ export async function getProducts(): Promise<ProductItem[]> {
 }
 
 export async function createProduct(input: Partial<ProductItem>): Promise<ProductItem> {
-  const newProduct: ProductItem = {
+  let savedProduct: ProductItem = {
     id: input.id || `prod-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     name: input.name?.trim() || "New Product",
     category: input.category?.trim() || "General",
@@ -108,53 +122,102 @@ export async function createProduct(input: Partial<ProductItem>): Promise<Produc
 
   // Attempt backend persistence
   try {
-    await fetch("/api/products", {
+    const res = await fetch("/api/products", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        id: newProduct.id,
-        name: newProduct.name,
-        category: newProduct.category,
-        billing: newProduct.model,
-        active: newProduct.status !== "Archived",
-        description: newProduct.description,
-        price: newProduct.price,
+        id: savedProduct.id,
+        name: savedProduct.name,
+        category: savedProduct.category,
+        billing: savedProduct.model,
+        active: savedProduct.status !== "Archived",
+        description: savedProduct.description,
+        price: savedProduct.price,
       }),
     });
+    if (res.ok) {
+      const data = await res.json();
+      if (data?.success && data?.product) {
+        savedProduct = {
+          id: data.product.id,
+          name: data.product.name,
+          category: data.product.category,
+          model: data.product.billing,
+          status: data.product.active === false ? "Archived" : "Active",
+          plans: typeof data.product.plans === "number" ? data.product.plans : 1,
+          customers: typeof data.product.customers === "number" ? data.product.customers : 0,
+          description: data.product.description || "",
+          price: typeof data.product.price === "number" ? data.product.price : 0,
+          createdAt: data.product.created_at || new Date().toISOString(),
+          updatedAt: data.product.updated_at || new Date().toISOString(),
+        };
+      }
+    }
   } catch (err) {
     console.warn("Backend POST /api/products failed (DB offline), persisting to local storage:", err);
   }
 
   const existing = loadLocalProducts();
-  const updated = [newProduct, ...existing.filter((p) => p.id !== newProduct.id)];
+  const updated = [savedProduct, ...existing.filter((p) => p.id !== savedProduct.id)];
   saveLocalProducts(updated);
 
   if (typeof window !== "undefined") {
-    window.dispatchEvent(new CustomEvent("products-updated", { detail: newProduct }));
+    window.dispatchEvent(new CustomEvent("products-updated", { detail: savedProduct }));
   }
 
-  return newProduct;
+  return savedProduct;
 }
 
 export async function updateProduct(id: string, updates: Partial<ProductItem>): Promise<ProductItem> {
   const existing = loadLocalProducts();
   const target = existing.find((p) => p.id === id);
-  if (!target) {
-    throw new Error(`Product with ID ${id} not found`);
-  }
 
-  const updatedProduct: ProductItem = {
-    ...target,
-    ...updates,
+  let updatedProduct: ProductItem = {
+    ...(target || {}),
+    id,
+    name: updates.name || target?.name || "Product",
+    category: updates.category || target?.category || "General",
+    model: updates.model || target?.model || "Usage based",
+    status: (updates.status || target?.status || "Active") as ProductItem["status"],
+    plans: updates.plans ?? target?.plans ?? 1,
+    customers: updates.customers ?? target?.customers ?? 0,
+    description: updates.description ?? target?.description ?? "",
+    price: updates.price ?? target?.price ?? 0,
+    createdAt: target?.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
 
   try {
-    await fetch(`/api/products/${encodeURIComponent(id)}`, {
+    const res = await fetch(`/api/products/${encodeURIComponent(id)}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(updatedProduct),
+      body: JSON.stringify({
+        name: updatedProduct.name,
+        category: updatedProduct.category,
+        billing: updatedProduct.model,
+        active: updatedProduct.status !== "Archived",
+        description: updatedProduct.description,
+        price: updatedProduct.price,
+      }),
     });
+    if (res.ok) {
+      const data = await res.json();
+      if (data?.success && data?.product) {
+        updatedProduct = {
+          id: data.product.id,
+          name: data.product.name,
+          category: data.product.category,
+          model: data.product.billing,
+          status: data.product.active === false ? "Archived" : "Active",
+          plans: typeof data.product.plans === "number" ? data.product.plans : 1,
+          customers: typeof data.product.customers === "number" ? data.product.customers : 0,
+          description: data.product.description || "",
+          price: typeof data.product.price === "number" ? data.product.price : 0,
+          createdAt: data.product.created_at || new Date().toISOString(),
+          updatedAt: data.product.updated_at || new Date().toISOString(),
+        };
+      }
+    }
   } catch (err) {
     console.warn("Backend PUT /api/products failed, persisting to local storage:", err);
   }

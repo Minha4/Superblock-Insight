@@ -1,4 +1,4 @@
-import { subscriptions as seedSubscriptions } from "@/data/mockData";
+import { customerContactsSummary } from "@/data/customerContactsData";
 
 export interface SubscriptionItem {
   id: string;
@@ -13,44 +13,69 @@ export interface SubscriptionItem {
   amount: number;
   payment: string;
   autoRenewal: boolean;
-  createdAt?: string;
+  createdAt: string;
   updatedAt?: string;
 }
 
-const STORAGE_KEY = "sb_subscriptions_list";
+const STORAGE_KEY = "analytics_studio_custom_subscriptions";
 
-function getSeedSubscriptions(): SubscriptionItem[] {
-  return seedSubscriptions.map((s, idx) => ({
-    id: `sub-seed-${idx + 1}`,
-    customer: s.customer,
-    customerId: s.customerId,
-    plan: s.plan,
-    status: s.status,
-    startDate: s.startDate,
-    renewalDate: s.renewalDate,
-    cycle: s.cycle,
-    mrr: s.mrr,
-    amount: s.amount,
-    payment: s.payment,
-    autoRenewal: s.autoRenewal,
-    createdAt: new Date().toISOString(),
-  }));
-}
+const DEFAULT_SUBSCRIPTIONS: SubscriptionItem[] = [
+  {
+    id: "sub-101",
+    customer: "Acme Corp",
+    customerId: "CUS-001",
+    plan: "Enterprise",
+    status: "Active",
+    startDate: "2024-01-10",
+    renewalDate: "2025-01-10",
+    cycle: "Annual",
+    mrr: 12500,
+    amount: 150000,
+    payment: "Paid",
+    autoRenewal: true,
+    createdAt: "2024-01-10T09:00:00Z",
+  },
+  {
+    id: "sub-102",
+    customer: "Global Logistics",
+    customerId: "CUS-002",
+    plan: "Growth",
+    status: "Active",
+    startDate: "2024-02-15",
+    renewalDate: "2024-05-15",
+    cycle: "Quarterly",
+    mrr: 4500,
+    amount: 13500,
+    payment: "Paid",
+    autoRenewal: true,
+    createdAt: "2024-02-15T11:30:00Z",
+  },
+  {
+    id: "sub-103",
+    customer: "FinTech Sol",
+    customerId: "CUS-003",
+    plan: "Starter",
+    status: "Pending",
+    startDate: "2024-03-01",
+    renewalDate: "2024-04-01",
+    cycle: "Monthly",
+    mrr: 1200,
+    amount: 1200,
+    payment: "Pending",
+    autoRenewal: false,
+    createdAt: "2024-03-01T14:20:00Z",
+  },
+];
 
 function loadLocalSubscriptions(): SubscriptionItem[] {
-  if (typeof window === "undefined") return getSeedSubscriptions();
+  if (typeof window === "undefined") return DEFAULT_SUBSCRIPTIONS;
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      const initial = getSeedSubscriptions();
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(initial));
-      return initial;
-    }
+    if (!raw) return DEFAULT_SUBSCRIPTIONS;
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) && parsed.length > 0 ? parsed : getSeedSubscriptions();
-  } catch (err) {
-    console.warn("Could not read subscriptions from localStorage:", err);
-    return getSeedSubscriptions();
+    return Array.isArray(parsed) && parsed.length > 0 ? parsed : DEFAULT_SUBSCRIPTIONS;
+  } catch {
+    return DEFAULT_SUBSCRIPTIONS;
   }
 }
 
@@ -69,28 +94,43 @@ export async function getSubscriptions(customerId?: string): Promise<Subscriptio
     const res = await fetch(url);
     if (res.ok) {
       const data = await res.json();
-      if (data?.success && Array.isArray(data?.subscriptions) && data.subscriptions.length > 0) {
-        const mappedFromDb: SubscriptionItem[] = data.subscriptions.map((s: any) => ({
-          id: s.id || `sub-${Date.now()}`,
-          customer: s.customer_name || s.customer || "SuperBlock Customer",
-          customerId: s.customer_id || customerId || "CUS-DEFAULT",
-          plan: s.plan_name || s.plan || "Growth",
-          status: s.status || "Active",
-          startDate: s.start_date || new Date().toISOString().split("T")[0],
-          renewalDate: s.end_date || new Date(Date.now() + 30 * 86400000).toISOString().split("T")[0],
-          cycle: s.billing_interval || s.cycle || "Monthly",
-          mrr: Number(s.amount) || 0,
-          amount: (Number(s.amount) || 0) * 12,
-          payment: s.status === "active" ? "Paid" : "Pending",
-          autoRenewal: true,
-          createdAt: s.created_at || new Date().toISOString(),
-        }));
-
+      if (data?.success && Array.isArray(data?.subscriptions)) {
         const local = loadLocalSubscriptions();
-        const customCreated = local.filter((l) => !mappedFromDb.some((d) => d.id === l.id));
-        const merged = [...mappedFromDb, ...customCreated];
-        saveLocalSubscriptions(merged);
-        return customerId ? merged.filter((m) => m.customerId === customerId) : merged;
+        const mappedFromDb: SubscriptionItem[] = data.subscriptions.map((s: any) => {
+          const localMatch = local.find((l) => l.id === s.id || l.customerId === s.customer_id);
+          const contactInfo = customerContactsSummary[s.customer_id] || Object.values(customerContactsSummary).find((c) => c.customerId === s.customer_id || c.clientUserId === s.customer_id);
+          const isGeneric = (name?: string | null) => !name || name.toLowerCase() === "superblock customer" || name.toLowerCase() === "new customer";
+          const resolvedCustomer = !isGeneric(s.customer_name)
+            ? s.customer_name
+            : (!isGeneric(s.customer)
+                ? s.customer
+                : (contactInfo?.customerName || (!isGeneric(localMatch?.customer) ? localMatch?.customer : "SuperBlock Customer")));
+          const resolvedPlan = s.plan_name || s.plan || localMatch?.plan || "Growth";
+
+          return {
+            id: s.id || `sub-${Date.now()}`,
+            customer: resolvedCustomer,
+            customerId: s.customer_id || customerId || "CUS-DEFAULT",
+            plan: resolvedPlan,
+            status: (s.status ? s.status.charAt(0).toUpperCase() + s.status.slice(1).toLowerCase() : "Active") as SubscriptionItem["status"],
+            startDate: s.start_date || new Date().toISOString().split("T")[0],
+            renewalDate: s.end_date || new Date(Date.now() + 30 * 86400000).toISOString().split("T")[0],
+            cycle: (s.billing_interval ? s.billing_interval.charAt(0).toUpperCase() + s.billing_interval.slice(1).toLowerCase() : "Monthly") as SubscriptionItem["cycle"],
+            mrr: Number(s.amount) || 0,
+            amount: (Number(s.amount) || 0) * 12,
+            payment: (s.status?.toLowerCase() === "active" ? "Paid" : "Pending") as SubscriptionItem["payment"],
+            autoRenewal: true,
+            createdAt: s.created_at || new Date().toISOString(),
+            updatedAt: s.updated_at || new Date().toISOString(),
+          };
+        });
+
+        if (mappedFromDb.length > 0) {
+          saveLocalSubscriptions(mappedFromDb);
+          return customerId ? mappedFromDb.filter((m) => m.customerId === customerId) : mappedFromDb;
+        } else if (local.length > 0 && !data.offline) {
+          return customerId ? local.filter((m) => m.customerId === customerId) : local;
+        }
       }
     }
   } catch (err) {
@@ -102,7 +142,7 @@ export async function getSubscriptions(customerId?: string): Promise<Subscriptio
 }
 
 export async function createSubscription(input: Partial<SubscriptionItem>): Promise<SubscriptionItem> {
-  const newSub: SubscriptionItem = {
+  let savedSub: SubscriptionItem = {
     id: input.id || `sub-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     customer: input.customer?.trim() || "New Customer",
     customerId: input.customerId?.trim() || `CUS-${Math.floor(10000 + Math.random() * 90000)}`,
@@ -120,55 +160,122 @@ export async function createSubscription(input: Partial<SubscriptionItem>): Prom
   };
 
   try {
-    await fetch("/api/subscriptions", {
+    const cycleStr = (savedSub.cycle || "monthly").toLowerCase();
+    const normalizedInterval = cycleStr.includes("annual") || cycleStr.includes("year") ? "annual" : (cycleStr.includes("quarter") ? "quarterly" : "monthly");
+
+    const res = await fetch("/api/subscriptions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        id: newSub.id,
-        customerId: newSub.customerId,
-        customer: newSub.customer,
-        plan: newSub.plan,
-        status: newSub.status,
-        startDate: newSub.startDate,
-        endDate: newSub.renewalDate,
-        amount: newSub.mrr,
-        billingInterval: newSub.cycle,
+        id: savedSub.id,
+        customerId: savedSub.customerId,
+        customer: savedSub.customer,
+        customer_name: savedSub.customer,
+        plan: savedSub.plan,
+        status: savedSub.status.toLowerCase(),
+        startDate: savedSub.startDate,
+        endDate: savedSub.renewalDate,
+        amount: savedSub.mrr,
+        billingInterval: normalizedInterval,
       }),
     });
+    if (res.ok) {
+      const data = await res.json();
+      if (data?.success && data?.subscription) {
+        savedSub = {
+          id: data.subscription.id,
+          customer: data.subscription.customer_name || data.subscription.customer || savedSub.customer,
+          customerId: data.subscription.customer_id || savedSub.customerId,
+          plan: data.subscription.plan_name || data.subscription.plan || savedSub.plan,
+          status: (data.subscription.status ? data.subscription.status.charAt(0).toUpperCase() + data.subscription.status.slice(1).toLowerCase() : "Active") as SubscriptionItem["status"],
+          startDate: data.subscription.start_date || savedSub.startDate,
+          renewalDate: data.subscription.end_date || savedSub.renewalDate,
+          cycle: (data.subscription.billing_interval ? data.subscription.billing_interval.charAt(0).toUpperCase() + data.subscription.billing_interval.slice(1).toLowerCase() : "Monthly") as SubscriptionItem["cycle"],
+          mrr: Number(data.subscription.amount) || savedSub.mrr,
+          amount: (Number(data.subscription.amount) || savedSub.mrr) * 12,
+          payment: (data.subscription.status?.toLowerCase() === "active" ? "Paid" : "Pending") as SubscriptionItem["payment"],
+          autoRenewal: true,
+          createdAt: data.subscription.created_at || savedSub.createdAt,
+          updatedAt: data.subscription.updated_at || new Date().toISOString(),
+        };
+      }
+    }
   } catch (err) {
     console.warn("Backend POST /api/subscriptions failed, persisting to local storage:", err);
   }
 
   const existing = loadLocalSubscriptions();
-  const updated = [newSub, ...existing.filter((s) => s.id !== newSub.id)];
+  const updated = [savedSub, ...existing.filter((s) => s.id !== savedSub.id)];
   saveLocalSubscriptions(updated);
 
   if (typeof window !== "undefined") {
-    window.dispatchEvent(new CustomEvent("subscriptions-updated", { detail: newSub }));
+    window.dispatchEvent(new CustomEvent("subscriptions-updated", { detail: savedSub }));
   }
 
-  return newSub;
+  return savedSub;
 }
 
 export async function updateSubscription(id: string, updates: Partial<SubscriptionItem>): Promise<SubscriptionItem> {
   const existing = loadLocalSubscriptions();
   const target = existing.find((s) => s.id === id);
-  if (!target) {
-    throw new Error(`Subscription with ID ${id} not found`);
-  }
 
-  const updatedSub: SubscriptionItem = {
-    ...target,
-    ...updates,
+  let updatedSub: SubscriptionItem = {
+    ...(target || {}),
+    id,
+    customer: updates.customer || target?.customer || "Customer",
+    customerId: updates.customerId || target?.customerId || "CUS-DEFAULT",
+    plan: updates.plan || target?.plan || "Growth",
+    status: (updates.status || target?.status || "Active") as SubscriptionItem["status"],
+    startDate: updates.startDate || target?.startDate || new Date().toISOString().split("T")[0],
+    renewalDate: updates.renewalDate || target?.renewalDate || new Date().toISOString().split("T")[0],
+    cycle: (updates.cycle || target?.cycle || "Monthly") as SubscriptionItem["cycle"],
+    mrr: updates.mrr ?? target?.mrr ?? 0,
+    amount: updates.amount ?? target?.amount ?? 0,
+    payment: (updates.payment || target?.payment || "Paid") as SubscriptionItem["payment"],
+    autoRenewal: updates.autoRenewal ?? target?.autoRenewal ?? true,
+    createdAt: target?.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
 
   try {
-    await fetch(`/api/subscriptions/${encodeURIComponent(id)}`, {
+    const cycleStr = (updates.cycle || "").toLowerCase();
+    const normalizedInterval = cycleStr ? (cycleStr.includes("annual") || cycleStr.includes("year") ? "annual" : (cycleStr.includes("quarter") ? "quarterly" : "monthly")) : undefined;
+
+    const res = await fetch(`/api/subscriptions/${encodeURIComponent(id)}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(updatedSub),
+      body: JSON.stringify({
+        status: updates.status?.toLowerCase(),
+        plan: updates.plan,
+        amount: updates.mrr,
+        billingInterval: normalizedInterval,
+        startDate: updates.startDate,
+        endDate: updates.renewalDate,
+        customer: updates.customer,
+        customer_name: updates.customer,
+      }),
     });
+    if (res.ok) {
+      const data = await res.json();
+      if (data?.success && data?.subscription) {
+        updatedSub = {
+          id: data.subscription.id,
+          customer: data.subscription.customer_name || updatedSub.customer,
+          customerId: data.subscription.customer_id || updatedSub.customerId,
+          plan: data.subscription.plan_name || updatedSub.plan,
+          status: (data.subscription.status ? data.subscription.status.charAt(0).toUpperCase() + data.subscription.status.slice(1).toLowerCase() : "Active") as SubscriptionItem["status"],
+          startDate: data.subscription.start_date || updatedSub.startDate,
+          renewalDate: data.subscription.end_date || updatedSub.renewalDate,
+          cycle: (data.subscription.billing_interval ? data.subscription.billing_interval.charAt(0).toUpperCase() + data.subscription.billing_interval.slice(1).toLowerCase() : "Monthly") as SubscriptionItem["cycle"],
+          mrr: Number(data.subscription.amount) || updatedSub.mrr,
+          amount: (Number(data.subscription.amount) || updatedSub.mrr) * 12,
+          payment: (data.subscription.status?.toLowerCase() === "active" ? "Paid" : "Pending") as SubscriptionItem["payment"],
+          autoRenewal: true,
+          createdAt: data.subscription.created_at || updatedSub.createdAt,
+          updatedAt: data.subscription.updated_at || new Date().toISOString(),
+        };
+      }
+    }
   } catch (err) {
     console.warn("Backend PUT /api/subscriptions failed, persisting to local storage:", err);
   }

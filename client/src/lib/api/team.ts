@@ -1,5 +1,3 @@
-import { teamMembers as seedMembers } from "@/data/mockData";
-
 export interface TeamMemberItem {
   id: string;
   name: string;
@@ -8,43 +6,74 @@ export interface TeamMemberItem {
   role: string;
   department: string;
   customers: number;
-  status: "Active" | "Away" | "Disabled";
+  status: string;
   lastActive: string;
-  createdAt?: string;
+  createdAt: string;
   updatedAt?: string;
 }
 
-const STORAGE_KEY = "sb_team_members_list";
+const STORAGE_KEY = "analytics_studio_custom_team";
 
-function getSeedTeamMembers(): TeamMemberItem[] {
-  return seedMembers.map((m, idx) => ({
-    id: `team-seed-${idx + 1}`,
-    name: m.name,
-    initials: m.initials,
-    email: m.email,
-    role: m.role,
-    department: m.department,
-    customers: m.customers,
-    status: (m.status as TeamMemberItem["status"]) || "Active",
-    lastActive: m.lastActive,
-    createdAt: new Date().toISOString(),
-  }));
-}
+const DEFAULT_TEAM: TeamMemberItem[] = [
+  {
+    id: "tm-1",
+    name: "Aakash Sharma",
+    initials: "AS",
+    email: "aakash@superblock.chat",
+    role: "Admin",
+    department: "Executive",
+    customers: 42,
+    status: "Active",
+    lastActive: "Now",
+    createdAt: "2024-01-01T09:00:00Z",
+  },
+  {
+    id: "tm-2",
+    name: "Sneha Patel",
+    initials: "SP",
+    email: "sneha@superblock.chat",
+    role: "Customer Success",
+    department: "Success",
+    customers: 28,
+    status: "Active",
+    lastActive: "10m ago",
+    createdAt: "2024-01-15T11:00:00Z",
+  },
+  {
+    id: "tm-3",
+    name: "Rohan Verma",
+    initials: "RV",
+    email: "rohan@superblock.chat",
+    role: "Support Lead",
+    department: "Support",
+    customers: 15,
+    status: "Away",
+    lastActive: "2h ago",
+    createdAt: "2024-02-01T14:30:00Z",
+  },
+  {
+    id: "tm-4",
+    name: "Pooja Nair",
+    initials: "PN",
+    email: "pooja@superblock.chat",
+    role: "Billing Specialist",
+    department: "Finance",
+    customers: 19,
+    status: "Active",
+    lastActive: "Just now",
+    createdAt: "2024-02-10T16:00:00Z",
+  },
+];
 
 function loadLocalTeamMembers(): TeamMemberItem[] {
-  if (typeof window === "undefined") return getSeedTeamMembers();
+  if (typeof window === "undefined") return DEFAULT_TEAM;
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      const initial = getSeedTeamMembers();
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(initial));
-      return initial;
-    }
+    if (!raw) return DEFAULT_TEAM;
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) && parsed.length > 0 ? parsed : getSeedTeamMembers();
-  } catch (err) {
-    console.warn("Could not read team members from localStorage:", err);
-    return getSeedTeamMembers();
+    return Array.isArray(parsed) && parsed.length > 0 ? parsed : DEFAULT_TEAM;
+  } catch {
+    return DEFAULT_TEAM;
   }
 }
 
@@ -69,7 +98,7 @@ export async function getTeamMembers(): Promise<TeamMemberItem[]> {
     const res = await fetch("/api/team");
     if (res.ok) {
       const data = await res.json();
-      if (data?.success && Array.isArray(data?.teamMembers) && data.teamMembers.length > 0) {
+      if (data?.success && Array.isArray(data?.teamMembers)) {
         const mappedFromDb: TeamMemberItem[] = data.teamMembers.map((m: any) => ({
           id: m.id || `tm-${Date.now()}`,
           name: m.name || m.org_user_name || "Team Member",
@@ -78,16 +107,14 @@ export async function getTeamMembers(): Promise<TeamMemberItem[]> {
           role: m.role || "Member",
           department: m.department || "Customer",
           customers: typeof m.customers === "number" ? m.customers : 0,
-          status: m.status || "Active",
+          status: (m.status || "Active") as TeamMemberItem["status"],
           lastActive: m.last_active || "Recently",
           createdAt: m.created_at || new Date().toISOString(),
+          updatedAt: m.updated_at || new Date().toISOString(),
         }));
 
-        const local = loadLocalTeamMembers();
-        const customCreated = local.filter((l) => !mappedFromDb.some((d) => d.id === l.id || d.email === l.email));
-        const merged = [...mappedFromDb, ...customCreated];
-        saveLocalTeamMembers(merged);
-        return merged;
+        saveLocalTeamMembers(mappedFromDb);
+        return mappedFromDb;
       }
     }
   } catch (err) {
@@ -99,7 +126,7 @@ export async function getTeamMembers(): Promise<TeamMemberItem[]> {
 
 export async function inviteTeamMember(input: Partial<TeamMemberItem>): Promise<TeamMemberItem> {
   const name = input.name?.trim() || "New Member";
-  const newMember: TeamMemberItem = {
+  let savedMember: TeamMemberItem = {
     id: input.id || `tm-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     name,
     initials: getInitials(name),
@@ -114,50 +141,105 @@ export async function inviteTeamMember(input: Partial<TeamMemberItem>): Promise<
   };
 
   try {
-    await fetch("/api/team", {
+    const res = await fetch("/api/team", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(newMember),
+      body: JSON.stringify({
+        id: savedMember.id,
+        name: savedMember.name,
+        email: savedMember.email,
+        role: savedMember.role,
+        department: savedMember.department,
+        customers: savedMember.customers,
+        status: savedMember.status,
+      }),
     });
+    if (res.ok) {
+      const data = await res.json();
+      if (data?.success && data?.teamMember) {
+        savedMember = {
+          id: data.teamMember.id,
+          name: data.teamMember.name,
+          initials: getInitials(data.teamMember.name),
+          email: data.teamMember.email,
+          role: data.teamMember.role || savedMember.role,
+          department: savedMember.department,
+          customers: savedMember.customers,
+          status: savedMember.status,
+          lastActive: "Just now",
+          createdAt: data.teamMember.created_at || savedMember.createdAt,
+          updatedAt: new Date().toISOString(),
+        };
+      }
+    }
   } catch (err) {
     console.warn("Backend POST /api/team failed (DB offline), persisting to local storage:", err);
   }
 
   const existing = loadLocalTeamMembers();
-  const updated = [newMember, ...existing.filter((m) => m.id !== newMember.id && m.email !== newMember.email)];
+  const updated = [savedMember, ...existing.filter((m) => m.id !== savedMember.id && m.email !== savedMember.email)];
   saveLocalTeamMembers(updated);
 
   if (typeof window !== "undefined") {
-    window.dispatchEvent(new CustomEvent("team-updated", { detail: newMember }));
+    window.dispatchEvent(new CustomEvent("team-updated", { detail: savedMember }));
   }
 
-  return newMember;
+  return savedMember;
 }
 
 export async function updateTeamMember(id: string, updates: Partial<TeamMemberItem>): Promise<TeamMemberItem> {
   const existing = loadLocalTeamMembers();
   const target = existing.find((m) => m.id === id || m.email === id);
-  if (!target) {
-    throw new Error(`Team member ${id} not found`);
-  }
 
-  const updatedMember: TeamMemberItem = {
-    ...target,
-    ...updates,
+  let updatedMember: TeamMemberItem = {
+    ...(target || {}),
+    id,
+    name: updates.name || target?.name || "Team Member",
+    initials: getInitials(updates.name || target?.name),
+    email: updates.email || target?.email || "team@superblock.chat",
+    role: updates.role || target?.role || "Member",
+    department: updates.department || target?.department || "Customer",
+    customers: updates.customers ?? target?.customers ?? 0,
+    status: (updates.status || target?.status || "Active") as TeamMemberItem["status"],
+    lastActive: "Just now",
+    createdAt: target?.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
 
   try {
-    await fetch(`/api/team/${encodeURIComponent(target.id)}`, {
+    const res = await fetch(`/api/team/${encodeURIComponent(target?.id || id)}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(updatedMember),
+      body: JSON.stringify({
+        name: updatedMember.name,
+        email: updatedMember.email,
+        role: updatedMember.role,
+        department: updatedMember.department,
+      }),
     });
+    if (res.ok) {
+      const data = await res.json();
+      if (data?.success && data?.teamMember) {
+        updatedMember = {
+          id: data.teamMember.id,
+          name: data.teamMember.name,
+          initials: getInitials(data.teamMember.name),
+          email: data.teamMember.email,
+          role: data.teamMember.role || updatedMember.role,
+          department: updatedMember.department,
+          customers: updatedMember.customers,
+          status: updatedMember.status,
+          lastActive: "Just now",
+          createdAt: data.teamMember.created_at || updatedMember.createdAt,
+          updatedAt: new Date().toISOString(),
+        };
+      }
+    }
   } catch (err) {
     console.warn("Backend PUT /api/team failed, persisting to local storage:", err);
   }
 
-  const updatedList = existing.map((m) => (m.id === target.id ? updatedMember : m));
+  const updatedList = existing.map((m) => (m.id === (target?.id || id) ? updatedMember : m));
   saveLocalTeamMembers(updatedList);
 
   if (typeof window !== "undefined") {

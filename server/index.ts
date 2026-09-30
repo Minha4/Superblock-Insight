@@ -23,16 +23,29 @@ import { deleteMeetingHandler } from "./lambda/meetings/deleteMeeting";
 import { updateMeetingHandler } from "./lambda/meetings/updateMeeting";
 import { getInvoicesHandler } from "./lambda/invoices/getInvoices";
 import { createInvoiceHandler } from "./lambda/invoices/createInvoice";
+import { updateInvoiceHandler } from "./lambda/invoices/updateInvoice";
+import { deleteInvoiceHandler } from "./lambda/invoices/deleteInvoice";
+import { getPlansHandler } from "./lambda/plans/getPlans";
+import { createPlanHandler } from "./lambda/plans/createPlan";
+import { updatePlanHandler } from "./lambda/plans/updatePlan";
+import { deletePlanHandler } from "./lambda/plans/deletePlan";
 import { getSubscriptionsHandler } from "./lambda/subscriptions/getSubscriptions";
 import { createSubscriptionHandler } from "./lambda/subscriptions/createSubscription";
+import { updateSubscriptionHandler } from "./lambda/subscriptions/updateSubscription";
+import { deleteSubscriptionHandler } from "./lambda/subscriptions/deleteSubscription";
 import { getProductsHandler } from "./lambda/products/getProducts";
 import { createProductHandler } from "./lambda/products/createProduct";
+import { updateProductHandler } from "./lambda/products/updateProduct";
+import { deleteProductHandler } from "./lambda/products/deleteProduct";
 import { getTeamMembersHandler } from "./lambda/teamMembers/getTeamMembers";
 import { createTeamMemberHandler } from "./lambda/teamMembers/createTeamMember";
+import { updateTeamMemberHandler } from "./lambda/teamMembers/updateTeamMember";
+import { deleteTeamMemberHandler } from "./lambda/teamMembers/deleteTeamMember";
 import { getUsageMetricsHandler } from "./lambda/usageMetrics/getUsageMetrics";
 import { getCredentialsHandler } from "./lambda/credentials/getCredentials";
 import { getCustomerOfferingsHandler } from "./lambda/customerOfferings/getCustomerOfferings";
 import { createCustomerOfferingHandler } from "./lambda/customerOfferings/createCustomerOffering";
+import { customerContactsSummary } from "../client/src/data/customerContactsData";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -722,7 +735,7 @@ app.use(express.json());
         ""
       ).trim();
 
-      let dbInvoices: any[] = [];
+      let dbInvoices: any[] | null = null;
       try {
         const result = await getInvoicesHandler({
           httpMethod: "GET",
@@ -732,40 +745,30 @@ app.use(express.json());
         });
         if (result.statusCode >= 200 && result.statusCode < 300) {
           const parsed = JSON.parse(result.body || "{}");
-          if (Array.isArray(parsed?.invoices) && parsed.invoices.length > 0) {
+          if (parsed?.success && Array.isArray(parsed?.invoices)) {
             dbInvoices = parsed.invoices;
           }
         }
-      } catch {
-        // Fall back gracefully to disk store when DB is offline
+      } catch (err) {
+        console.warn("Database getInvoices error, falling back:", err);
       }
 
-      const normalizedDb = dbInvoices.map(normalizeInvoiceRecord);
+      // Successful database path (getInvoicesHandler already filtered in SQL if customerId was provided)
+      if (dbInvoices !== null) {
+        const normalizedDb = dbInvoices.map(normalizeInvoiceRecord);
+        return res.status(200).json({
+          success: true,
+          count: normalizedDb.length,
+          customerId: customerId || undefined,
+          invoices: normalizedDb,
+          offline: false,
+        });
+      }
+
+      // Safe fallback when DB is offline or unreachable
       const diskInvoices = loadFallbackInvoices().map(normalizeInvoiceRecord);
-
-      // Merge: DB items prioritized, combined with persistent store
-      const seen = new Set<string>();
-      const combined: any[] = [];
-
-      for (const inv of normalizedDb) {
-        const key = inv.invoice_number || inv.id;
-        if (key && !seen.has(key)) {
-          seen.add(key);
-          combined.push(inv);
-        }
-      }
-
-      for (const inv of diskInvoices) {
-        const key = inv.invoice_number || inv.id;
-        if (key && !seen.has(key)) {
-          seen.add(key);
-          combined.push(inv);
-        }
-      }
-
-      // Filter by customerId if requested
       const filtered = customerId
-        ? combined.filter((inv) => {
+        ? diskInvoices.filter((inv) => {
             const cId = String(inv.customerId || inv.customer_id || "").toLowerCase();
             const targetId = customerId.toLowerCase();
             const cName = String(inv.customer || inv.customer_name || "").toLowerCase();
@@ -776,14 +779,14 @@ app.use(express.json());
               targetId.includes(cId)
             );
           })
-        : combined;
+        : diskInvoices;
 
       return res.status(200).json({
         success: true,
         count: filtered.length,
         customerId: customerId || undefined,
         invoices: filtered,
-        offline: normalizedDb.length === 0,
+        offline: true,
       });
     } catch (error: any) {
       console.warn("Error in GET /api/invoices:", error?.message);
@@ -797,42 +800,78 @@ app.use(express.json());
     }
   });
 
-  app.put("/api/invoices/:id", (req, res) => {
+  app.put("/api/invoices/:id", async (req, res) => {
     try {
       const id = req.params.id;
       const updates = req.body || {};
+      let dbUpdated: any = null;
+
+      try {
+        const result = await updateInvoiceHandler({
+          httpMethod: "PUT",
+          path: `/invoices/${id}`,
+          pathParameters: { id },
+          headers: req.headers as Record<string, string | undefined>,
+          body: JSON.stringify(updates),
+        });
+        if (result.statusCode >= 200 && result.statusCode < 300) {
+          const parsed = JSON.parse(result.body || "{}");
+          if (parsed?.success && parsed?.invoice) {
+            dbUpdated = parsed.invoice;
+          }
+        }
+      } catch (dbErr) {
+        console.warn("DB update failed, using fallback:", dbErr);
+      }
+
       const current = loadFallbackInvoices();
       let updatedObj: any = null;
 
       const updatedList = current.map((inv) => {
         if (inv.id === id || inv.invoice_number === id) {
-          updatedObj = normalizeInvoiceRecord({ ...inv, ...updates });
+          updatedObj = normalizeInvoiceRecord(dbUpdated ? { ...inv, ...dbUpdated } : { ...inv, ...updates });
           return updatedObj;
         }
         return inv;
       });
 
       if (!updatedObj) {
-        updatedObj = normalizeInvoiceRecord({ id, ...updates });
+        updatedObj = normalizeInvoiceRecord(dbUpdated || { id, ...updates });
         updatedList.unshift(updatedObj);
       }
 
       saveFallbackInvoicesToDisk(updatedList);
       invalidateAnalyticsCache();
-      return res.json({ success: true, invoice: updatedObj });
+      return res.json({ success: true, invoice: updatedObj, offline: !dbUpdated });
     } catch (error: any) {
       return res.status(500).json({ success: false, error: error?.message || "Failed to update invoice" });
     }
   });
 
-  app.delete("/api/invoices/:id", (req, res) => {
+  app.delete("/api/invoices/:id", async (req, res) => {
     try {
       const id = req.params.id;
+      let dbDeleted = false;
+
+      try {
+        const result = await deleteInvoiceHandler({
+          httpMethod: "DELETE",
+          path: `/invoices/${id}`,
+          pathParameters: { id },
+          headers: req.headers as Record<string, string | undefined>,
+        });
+        if (result.statusCode >= 200 && result.statusCode < 300) {
+          dbDeleted = true;
+        }
+      } catch (dbErr) {
+        console.warn("DB delete failed, using fallback:", dbErr);
+      }
+
       const current = loadFallbackInvoices();
       const filtered = current.filter((i) => i.id !== id && i.invoice_number !== id);
       saveFallbackInvoicesToDisk(filtered);
       invalidateAnalyticsCache();
-      return res.json({ success: true, id });
+      return res.json({ success: true, id, offline: !dbDeleted });
     } catch (error: any) {
       return res.status(500).json({ success: false, error: error?.message || "Failed to delete invoice" });
     }
@@ -901,6 +940,7 @@ app.use(express.json());
             status,
             issueDate,
             dueDate,
+            paidDate: status === "Paid" ? (newInv.paid_date || new Date().toISOString().split("T")[0]) : (body.paidDate || body.paid_date || null),
             description,
           }),
         });
@@ -998,8 +1038,16 @@ app.use(express.json());
   };
 
   const customerOverrides = new Map<string, any>();
+  const subscriptionCustomerNames = new Map<string, string>();
+  for (const [key, info] of Object.entries(customerContactsSummary)) {
+    if (info.customerName) {
+      subscriptionCustomerNames.set(key, info.customerName);
+      if (info.customerId) subscriptionCustomerNames.set(info.customerId, info.customerName);
+      if (info.clientUserId) subscriptionCustomerNames.set(info.clientUserId, info.customerName);
+    }
+  }
 
-  // Subscriptions endpoints
+  // Subscriptions endpoints (GET, POST, PUT, DELETE) connected to Supabase public.subscriptions
   app.get("/api/subscriptions", async (req, res) => {
     try {
       const result = await getSubscriptionsHandler({
@@ -1014,8 +1062,21 @@ app.use(express.json());
       } catch {
         responseData = { message: result.body };
       }
-      if (result.statusCode >= 200 && result.statusCode < 300 && Array.isArray(responseData?.subscriptions) && responseData.subscriptions.length > 0) {
-        return res.status(result.statusCode).json(responseData);
+      if (result.statusCode >= 200 && result.statusCode < 300 && responseData?.success && Array.isArray(responseData?.subscriptions)) {
+        const enriched = responseData.subscriptions.map((s: any) => {
+          const custName = s.customer_name || subscriptionCustomerNames.get(s.id) || subscriptionCustomerNames.get(s.customer_id) || s.customer || "Superblock Customer";
+          return {
+            ...s,
+            customer: custName,
+            customer_name: custName,
+          };
+        });
+        return res.status(200).json({
+          success: true,
+          count: enriched.length,
+          subscriptions: enriched,
+          offline: false,
+        });
       }
       return res.status(200).json({ success: true, count: fallbackSubscriptions.length, subscriptions: fallbackSubscriptions, offline: true });
     } catch (error: any) {
@@ -1026,6 +1087,7 @@ app.use(express.json());
 
   app.post("/api/subscriptions", async (req, res) => {
     try {
+      const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
       const result = await createSubscriptionHandler({
         httpMethod: "POST",
         path: "/subscriptions",
@@ -1039,10 +1101,25 @@ app.use(express.json());
         responseData = { message: result.body };
       }
       if (result.statusCode >= 200 && result.statusCode < 300 && responseData?.success) {
-        return res.status(result.statusCode).json(responseData);
+        if (responseData.subscription?.id && body?.customer) {
+          subscriptionCustomerNames.set(responseData.subscription.id, body.customer);
+        }
+        if (responseData.subscription?.customer_id && body?.customer && !customerContactsSummary[responseData.subscription.customer_id]) {
+          subscriptionCustomerNames.set(responseData.subscription.customer_id, body.customer);
+        }
+        const custName = body?.customer || responseData.subscription?.customer_name || "Superblock Customer";
+        const enriched = {
+          ...responseData.subscription,
+          customer: custName,
+          customer_name: custName,
+        };
+        return res.status(result.statusCode).json({
+          success: true,
+          offline: false,
+          subscription: enriched,
+        });
       }
       // Offline fallback
-      const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
       const newSub = {
         id: body.id || `sub-${Date.now()}`,
         customer: body.customer || "Superblock Customer",
@@ -1081,20 +1158,80 @@ app.use(express.json());
     }
   });
 
-  app.put("/api/subscriptions/:id", (req, res) => {
+  app.put("/api/subscriptions/:id", async (req, res) => {
     const id = req.params.id;
+    try {
+      const result = await updateSubscriptionHandler({
+        httpMethod: "PUT",
+        path: `/subscriptions/${id}`,
+        pathParameters: { id },
+        headers: req.headers as Record<string, string | undefined>,
+        body: typeof req.body === "string" ? req.body : JSON.stringify(req.body),
+      });
+      let responseData: any;
+      try {
+        responseData = JSON.parse(result.body);
+      } catch {
+        responseData = { message: result.body };
+      }
+      if (result.statusCode >= 200 && result.statusCode < 300 && responseData?.success) {
+        const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
+        if (body?.customer && responseData.subscription?.id) {
+          subscriptionCustomerNames.set(responseData.subscription.id, body.customer);
+        }
+        const custName = body?.customer || subscriptionCustomerNames.get(id) || (responseData.subscription?.customer_id ? subscriptionCustomerNames.get(responseData.subscription.customer_id) : null) || responseData.subscription?.customer_name || "Superblock Customer";
+        const enriched = {
+          ...responseData.subscription,
+          customer: custName,
+          customer_name: custName,
+        };
+        return res.status(200).json({
+          success: true,
+          offline: false,
+          subscription: enriched,
+        });
+      }
+    } catch (error: any) {
+      console.warn("PUT /api/subscriptions/:id DB error, falling back:", error?.message);
+    }
+
     const updates = req.body || {};
     const existing = fallbackSubscriptions.find((s) => s.id === id);
     if (existing) {
       Object.assign(existing, updates);
     }
-    return res.json({ success: true, subscription: existing || updates });
+    return res.json({ success: true, offline: true, subscription: existing || updates });
   });
 
-  app.delete("/api/subscriptions/:id", (req, res) => {
+  app.delete("/api/subscriptions/:id", async (req, res) => {
     const id = req.params.id;
+    subscriptionCustomerNames.delete(id);
+    try {
+      const result = await deleteSubscriptionHandler({
+        httpMethod: "DELETE",
+        path: `/subscriptions/${id}`,
+        pathParameters: { id },
+        headers: req.headers as Record<string, string | undefined>,
+      });
+      let responseData: any;
+      try {
+        responseData = JSON.parse(result.body);
+      } catch {
+        responseData = { message: result.body };
+      }
+      if (result.statusCode >= 200 && result.statusCode < 300 && responseData?.success) {
+        return res.status(200).json({
+          success: true,
+          offline: false,
+          id: responseData.id || id,
+        });
+      }
+    } catch (error: any) {
+      console.warn("DELETE /api/subscriptions/:id DB error, falling back:", error?.message);
+    }
+
     fallbackSubscriptions = fallbackSubscriptions.filter((s) => s.id !== id);
-    return res.json({ success: true, id });
+    return res.json({ success: true, offline: true, id });
   });
 
   // Credentials endpoint
@@ -1119,7 +1256,7 @@ app.use(express.json());
     }
   });
 
-  // Products endpoints (GET, POST, PUT, DELETE)
+  // Products endpoints (GET, POST, PUT, DELETE) connected to Supabase public.products
   app.get("/api/products", async (req, res) => {
     try {
       const result = await getProductsHandler({
@@ -1134,8 +1271,13 @@ app.use(express.json());
       } catch {
         responseData = { message: result.body };
       }
-      if (result.statusCode >= 200 && result.statusCode < 300 && Array.isArray(responseData?.products) && responseData.products.length > 0) {
-        return res.status(result.statusCode).json(responseData);
+      if (result.statusCode >= 200 && result.statusCode < 300 && responseData?.success && Array.isArray(responseData?.products)) {
+        return res.status(200).json({
+          success: true,
+          count: responseData.products.length,
+          products: responseData.products,
+          offline: false,
+        });
       }
       return res.status(200).json({ success: true, count: fallbackProducts.length, products: fallbackProducts, offline: true });
     } catch (error: any) {
@@ -1153,11 +1295,13 @@ app.use(express.json());
         headers: req.headers as Record<string, string | undefined>,
         body: JSON.stringify({
           customerId: body.customerId || "superblock",
+          id: body.id,
           name: body.name,
           category: body.category,
           billing: body.model || body.billing,
           description: body.description,
           price: body.price,
+          active: body.status !== "Archived" && body.active !== false,
         }),
       });
       let responseData: any;
@@ -1167,7 +1311,11 @@ app.use(express.json());
         responseData = { message: result.body };
       }
       if (result.statusCode >= 200 && result.statusCode < 300 && responseData?.success) {
-        return res.status(result.statusCode).json(responseData);
+        return res.status(result.statusCode).json({
+          success: true,
+          offline: false,
+          product: responseData.product,
+        });
       }
       // Offline fallback
       const newProduct = {
@@ -1200,60 +1348,251 @@ app.use(express.json());
     }
   });
 
-  app.put("/api/products/:id", (req, res) => {
+  app.put("/api/products/:id", async (req, res) => {
     const id = req.params.id;
+    try {
+      const result = await updateProductHandler({
+        httpMethod: "PUT",
+        path: `/products/${id}`,
+        pathParameters: { id },
+        headers: req.headers as Record<string, string | undefined>,
+        body: typeof req.body === "string" ? req.body : JSON.stringify(req.body),
+      });
+      let responseData: any;
+      try {
+        responseData = JSON.parse(result.body);
+      } catch {
+        responseData = { message: result.body };
+      }
+      if (result.statusCode >= 200 && result.statusCode < 300 && responseData?.success) {
+        return res.status(200).json({
+          success: true,
+          offline: false,
+          product: responseData.product,
+        });
+      }
+    } catch (error: any) {
+      console.warn("PUT /api/products/:id DB error, falling back:", error?.message);
+    }
+
     const updates = req.body || {};
     const existing = fallbackProducts.find((p) => p.id === id);
     if (existing) {
       Object.assign(existing, updates);
     }
-    return res.json({ success: true, product: existing || updates });
+    return res.json({ success: true, offline: true, product: existing || updates });
   });
 
-  app.delete("/api/products/:id", (req, res) => {
+  app.delete("/api/products/:id", async (req, res) => {
     const id = req.params.id;
-    fallbackProducts = fallbackProducts.filter((p) => p.id !== id);
-    return res.json({ success: true, id });
-  });
-
-  // Plans endpoints (GET, POST, PUT, DELETE)
-  app.get("/api/plans", (_req, res) => {
-    return res.json({ success: true, count: fallbackPlans.length, plans: fallbackPlans });
-  });
-
-  app.post("/api/plans", (req, res) => {
-    const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
-    const newPlan = {
-      id: body.id || `plan-${Date.now()}`,
-      name: body.name || "New Plan",
-      product: body.product || "Omnichannel Suite",
-      monthly: body.monthly ?? 0,
-      annual: body.annual ?? ((body.monthly || 0) * 10),
-      limit: body.limit || "Unlimited broadcasts",
-      features: body.features ?? 8,
-      status: body.status || "Active",
-    };
-    fallbackPlans = [newPlan, ...fallbackPlans.filter((p) => p.id !== newPlan.id)];
-    return res.status(200).json({ success: true, plan: newPlan });
-  });
-
-  app.put("/api/plans/:id", (req, res) => {
-    const id = req.params.id;
-    const updates = req.body || {};
-    const existing = fallbackPlans.find((p) => p.id === id);
-    if (existing) {
-      Object.assign(existing, updates);
+    try {
+      const result = await deleteProductHandler({
+        httpMethod: "DELETE",
+        path: `/products/${id}`,
+        pathParameters: { id },
+        headers: req.headers as Record<string, string | undefined>,
+      });
+      let responseData: any;
+      try {
+        responseData = JSON.parse(result.body);
+      } catch {
+        responseData = { message: result.body };
+      }
+      if (result.statusCode >= 200 && result.statusCode < 300 && responseData?.success) {
+        return res.status(200).json({
+          success: true,
+          offline: false,
+          id: responseData.id || id,
+        });
+      }
+    } catch (error: any) {
+      console.warn("DELETE /api/products/:id DB error, falling back:", error?.message);
     }
-    return res.json({ success: true, plan: existing || updates });
+
+    fallbackProducts = fallbackProducts.filter((p) => p.id !== id);
+    return res.json({ success: true, offline: true, id });
   });
 
-  app.delete("/api/plans/:id", (req, res) => {
-    const id = req.params.id;
-    fallbackPlans = fallbackPlans.filter((p) => p.id !== id);
-    return res.json({ success: true, id });
+  // Plans endpoints (GET, POST, PUT, DELETE) connected to Supabase public.plans
+  app.get("/api/plans", async (req, res) => {
+    try {
+      let dbPlans: any[] | null = null;
+      try {
+        const result = await getPlansHandler({
+          httpMethod: "GET",
+          path: "/plans",
+          headers: req.headers as Record<string, string | undefined>,
+          queryStringParameters: req.query as Record<string, string | undefined>,
+        });
+        if (result.statusCode >= 200 && result.statusCode < 300) {
+          const parsed = JSON.parse(result.body || "{}");
+          if (parsed?.success && Array.isArray(parsed?.plans)) {
+            dbPlans = parsed.plans;
+          }
+        }
+      } catch (err) {
+        console.warn("Database getPlans error, falling back to in-memory:", err);
+      }
+
+      // Successful database path
+      if (dbPlans !== null) {
+        return res.status(200).json({
+          success: true,
+          count: dbPlans.length,
+          plans: dbPlans,
+          offline: false,
+        });
+      }
+
+      // Safe offline fallback
+      return res.status(200).json({
+        success: true,
+        count: fallbackPlans.length,
+        plans: fallbackPlans,
+        offline: true,
+      });
+    } catch (error: any) {
+      return res.status(200).json({
+        success: true,
+        count: fallbackPlans.length,
+        plans: fallbackPlans,
+        offline: true,
+      });
+    }
   });
 
-  // Team endpoints (GET, POST, PUT, DELETE)
+  app.post("/api/plans", async (req, res) => {
+    try {
+      const body = typeof req.body === "string" ? JSON.parse(req.body) : (req.body || {});
+      let dbInserted: any = null;
+
+      try {
+        const result = await createPlanHandler({
+          httpMethod: "POST",
+          path: "/plans",
+          headers: req.headers as Record<string, string | undefined>,
+          body: JSON.stringify(body),
+        });
+        if (result.statusCode >= 200 && result.statusCode < 300) {
+          const parsed = JSON.parse(result.body || "{}");
+          if (parsed?.success && parsed?.plan) {
+            dbInserted = parsed.plan;
+          }
+        }
+      } catch (err) {
+        console.warn("Database createPlan error, falling back to in-memory:", err);
+      }
+
+      const planRecord = dbInserted || {
+        id: body.id || `plan-${Date.now()}`,
+        name: body.name || "New Plan",
+        product: body.product || "Omnichannel Suite",
+        monthly: typeof body.monthly === "number" ? body.monthly : (Number(body.monthly) || 0),
+        annual: typeof body.annual === "number" ? body.annual : (Number(body.annual) || ((Number(body.monthly) || 0) * 10)),
+        limit: body.limit || "Standard limits",
+        features: typeof body.features === "number" ? body.features : (Number(body.features) || 8),
+        status: body.status || "Active",
+        description: body.description || "",
+      };
+
+      // Keep offline fallback in sync
+      fallbackPlans = [planRecord, ...fallbackPlans.filter((p) => p.id !== planRecord.id)];
+
+      return res.status(200).json({
+        success: true,
+        plan: planRecord,
+        offline: !dbInserted,
+      });
+    } catch (error: any) {
+      console.error("Error creating plan:", error);
+      return res.status(500).json({
+        success: false,
+        error: error?.message || "Failed to create plan",
+      });
+    }
+  });
+
+  app.put("/api/plans/:id", async (req, res) => {
+    try {
+      const id = req.params.id;
+      const updates = req.body || {};
+      let dbUpdated: any = null;
+
+      try {
+        const result = await updatePlanHandler({
+          httpMethod: "PUT",
+          path: `/plans/${id}`,
+          pathParameters: { id },
+          headers: req.headers as Record<string, string | undefined>,
+          body: JSON.stringify(updates),
+        });
+        if (result.statusCode >= 200 && result.statusCode < 300) {
+          const parsed = JSON.parse(result.body || "{}");
+          if (parsed?.success && parsed?.plan) {
+            dbUpdated = parsed.plan;
+          }
+        }
+      } catch (err) {
+        console.warn("Database updatePlan error, falling back to in-memory:", err);
+      }
+
+      // Keep offline fallback in sync
+      const existing = fallbackPlans.find((p) => p.id === id);
+      if (existing) {
+        Object.assign(existing, dbUpdated || updates);
+      } else if (dbUpdated) {
+        fallbackPlans.unshift(dbUpdated);
+      }
+
+      return res.json({
+        success: true,
+        plan: dbUpdated || existing || { id, ...updates },
+        offline: !dbUpdated,
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        success: false,
+        error: error?.message || "Failed to update plan",
+      });
+    }
+  });
+
+  app.delete("/api/plans/:id", async (req, res) => {
+    try {
+      const id = req.params.id;
+      let dbDeleted = false;
+
+      try {
+        const result = await deletePlanHandler({
+          httpMethod: "DELETE",
+          path: `/plans/${id}`,
+          pathParameters: { id },
+          headers: req.headers as Record<string, string | undefined>,
+        });
+        if (result.statusCode >= 200 && result.statusCode < 300) {
+          dbDeleted = true;
+        }
+      } catch (err) {
+        console.warn("Database deletePlan error, falling back to in-memory:", err);
+      }
+
+      // Keep offline fallback in sync
+      fallbackPlans = fallbackPlans.filter((p) => p.id !== id);
+
+      return res.json({
+        success: true,
+        id,
+        offline: !dbDeleted,
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        success: false,
+        error: error?.message || "Failed to delete plan",
+      });
+    }
+  });
+
+  // Team endpoints (GET, POST, PUT, DELETE) connected to Supabase public.team_members
   app.get("/api/team", async (req, res) => {
     try {
       const result = await getTeamMembersHandler({
@@ -1268,8 +1607,13 @@ app.use(express.json());
       } catch {
         responseData = { message: result.body };
       }
-      if (result.statusCode >= 200 && result.statusCode < 300 && Array.isArray(responseData?.teamMembers) && responseData.teamMembers.length > 0) {
-        return res.status(result.statusCode).json(responseData);
+      if (result.statusCode >= 200 && result.statusCode < 300 && responseData?.success && Array.isArray(responseData?.teamMembers)) {
+        return res.status(200).json({
+          success: true,
+          count: responseData.teamMembers.length,
+          teamMembers: responseData.teamMembers,
+          offline: false,
+        });
       }
       return res.status(200).json({ success: true, count: fallbackTeamMembers.length, teamMembers: fallbackTeamMembers, offline: true });
     } catch (error: any) {
@@ -1286,10 +1630,13 @@ app.use(express.json());
         path: "/team-members",
         headers: req.headers as Record<string, string | undefined>,
         body: JSON.stringify({
-          customerId: "superblock",
+          customerId: body.customerId || "superblock",
+          id: body.id,
+          teamUserId: body.teamUserId || body.id,
           name: body.name,
           email: body.email,
           role: body.role,
+          avatarUrl: body.avatarUrl || body.avatar_url,
         }),
       });
       let responseData: any;
@@ -1299,7 +1646,11 @@ app.use(express.json());
         responseData = { message: result.body };
       }
       if (result.statusCode >= 200 && result.statusCode < 300 && responseData?.success) {
-        return res.status(result.statusCode).json(responseData);
+        return res.status(result.statusCode).json({
+          success: true,
+          offline: false,
+          teamMember: responseData.teamMember,
+        });
       }
       // Offline fallback
       const initials = (body.name || "U").split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase();
@@ -1336,20 +1687,69 @@ app.use(express.json());
     }
   });
 
-  app.put("/api/team/:id", (req, res) => {
+  app.put("/api/team/:id", async (req, res) => {
     const id = req.params.id;
+    try {
+      const result = await updateTeamMemberHandler({
+        httpMethod: "PUT",
+        path: `/team/${id}`,
+        pathParameters: { id },
+        headers: req.headers as Record<string, string | undefined>,
+        body: typeof req.body === "string" ? req.body : JSON.stringify(req.body),
+      });
+      let responseData: any;
+      try {
+        responseData = JSON.parse(result.body);
+      } catch {
+        responseData = { message: result.body };
+      }
+      if (result.statusCode >= 200 && result.statusCode < 300 && responseData?.success) {
+        return res.status(200).json({
+          success: true,
+          offline: false,
+          teamMember: responseData.teamMember,
+        });
+      }
+    } catch (error: any) {
+      console.warn("PUT /api/team/:id DB error, falling back:", error?.message);
+    }
+
     const updates = req.body || {};
     const existing = fallbackTeamMembers.find((m) => m.id === id || m.email === id);
     if (existing) {
       Object.assign(existing, updates);
     }
-    return res.json({ success: true, teamMember: existing || updates });
+    return res.json({ success: true, offline: true, teamMember: existing || updates });
   });
 
-  app.delete("/api/team/:id", (req, res) => {
+  app.delete("/api/team/:id", async (req, res) => {
     const id = req.params.id;
+    try {
+      const result = await deleteTeamMemberHandler({
+        httpMethod: "DELETE",
+        path: `/team/${id}`,
+        pathParameters: { id },
+        headers: req.headers as Record<string, string | undefined>,
+      });
+      let responseData: any;
+      try {
+        responseData = JSON.parse(result.body);
+      } catch {
+        responseData = { message: result.body };
+      }
+      if (result.statusCode >= 200 && result.statusCode < 300 && responseData?.success) {
+        return res.status(200).json({
+          success: true,
+          offline: false,
+          id: responseData.id || id,
+        });
+      }
+    } catch (error: any) {
+      console.warn("DELETE /api/team/:id DB error, falling back:", error?.message);
+    }
+
     fallbackTeamMembers = fallbackTeamMembers.filter((m) => m.id !== id && m.email !== id);
-    return res.json({ success: true, id });
+    return res.json({ success: true, offline: true, id });
   });
 
   // Settings endpoints (GET, POST)
@@ -1426,7 +1826,7 @@ app.use(express.json());
     }
   });
 
-  // Customer Offerings endpoints
+  // Customer Offerings endpoints connected to Supabase public.customer_offerings
   app.get("/api/customer-offerings", async (req, res) => {
     try {
       const result = await getCustomerOfferingsHandler({
@@ -1435,16 +1835,22 @@ app.use(express.json());
         headers: req.headers as Record<string, string | undefined>,
         queryStringParameters: req.query as Record<string, string | undefined>,
       });
-      let responseData: unknown;
+      let responseData: any;
       try {
         responseData = JSON.parse(result.body);
       } catch {
         responseData = { message: result.body };
       }
-      return res.status(result.statusCode).json(responseData);
+      if (result.statusCode >= 200 && result.statusCode < 300 && responseData?.success) {
+        return res.status(result.statusCode).json({
+          ...responseData,
+          offline: false,
+        });
+      }
+      return res.status(200).json({ success: true, count: 0, offerings: [], offline: true });
     } catch (error: any) {
       console.error("Error fetching customer offerings:", error);
-      return res.status(500).json({ success: false, error: error?.message || "Internal server error", offerings: [] });
+      return res.status(200).json({ success: true, count: 0, offerings: [], offline: true });
     }
   });
 
@@ -1462,27 +1868,27 @@ app.use(express.json());
       } catch {
         responseData = { message: result.body };
       }
-      if (
-        result.statusCode >= 500 ||
-        (responseData && !responseData.success && (responseData.error?.includes("ECONNRESET") || responseData.error?.includes("connect")))
-      ) {
-        const bodyObj = typeof req.body === "string" ? JSON.parse(req.body) : (req.body || {});
-        return res.status(200).json({
-          success: true,
-          offline: true,
-          offering: {
-            id: `offering-${Date.now()}`,
-            customer_id: bodyObj.customerId || bodyObj.customer_id,
-            offering_name: bodyObj.offeringName || "Custom Offering",
-            status: bodyObj.status || "Active",
-            start_date: bodyObj.startDate || new Date().toISOString(),
-            end_date: bodyObj.endDate || null,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          },
+      if (result.statusCode >= 200 && result.statusCode < 300 && responseData?.success) {
+        return res.status(result.statusCode).json({
+          ...responseData,
+          offline: false,
         });
       }
-      return res.status(result.statusCode).json(responseData);
+      const bodyObj = typeof req.body === "string" ? JSON.parse(req.body) : (req.body || {});
+      return res.status(200).json({
+        success: true,
+        offline: true,
+        offering: {
+          id: `offering-${Date.now()}`,
+          customer_id: bodyObj.customerId || bodyObj.customer_id,
+          offering_name: bodyObj.offeringName || "Custom Offering",
+          status: bodyObj.status || "Active",
+          start_date: bodyObj.startDate || new Date().toISOString(),
+          end_date: bodyObj.endDate || null,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        },
+      });
     } catch (error: any) {
       console.error("Error creating customer offering:", error);
       const bodyObj = typeof req.body === "string" ? JSON.parse(req.body) : (req.body || {});
@@ -1526,7 +1932,13 @@ export async function startServer() {
   });
 }
 
+const isMain = process.argv[1] && (
+  process.argv[1].endsWith("server/index.ts") ||
+  process.argv[1].endsWith("server\\index.ts") ||
+  process.argv[1].endsWith("dist/index.js") ||
+  process.argv[1].endsWith("dist\\index.js")
+);
 const isVite = process.argv.some((arg) => arg.includes("vite"));
-if (!isVite) {
+if (isMain && !isVite) {
   startServer().catch(console.error);
 }

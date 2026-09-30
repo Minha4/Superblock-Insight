@@ -42,7 +42,7 @@ export async function getTeamMembersHandler(
           email,
           avatar_url,
           role,
-          created_at
+          created_at::text
         FROM public.team_members
         ORDER BY created_at DESC;
       `;
@@ -69,16 +69,12 @@ export async function getTeamMembersHandler(
         email,
         avatar_url,
         role,
-        password_hash,
-        created_at
+        created_at::text
       FROM public.team_members
       WHERE LOWER(org_user_id) = LOWER($1)
          OR LOWER(team_user_id) = LOWER($1)
-         OR org_user_id IN (
-           SELECT cd.client_user_id 
-           FROM public.customers_details cd 
-           WHERE cd.id::text = $1
-         )
+         OR LOWER(email) = LOWER($1)
+         OR id::text = $1
       ORDER BY created_at DESC;
     `;
 

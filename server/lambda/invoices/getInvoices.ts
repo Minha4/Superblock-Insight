@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { query } from "../db";
 import type {
   APIGatewayProxyEvent,
@@ -12,6 +13,16 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Headers": "Content-Type,Authorization,X-Amz-Date,X-Api-Key",
   "Access-Control-Allow-Methods": "GET,OPTIONS",
 };
+
+function isUuid(str: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+}
+
+function toDeterministicUuid(str: string): string {
+  if (isUuid(str)) return str;
+  const hex = crypto.createHash("md5").update(str.trim().toLowerCase()).digest("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
 
 export async function getInvoicesHandler(
   event: APIGatewayProxyEvent
@@ -38,30 +49,34 @@ export async function getInvoicesHandler(
           i.status,
           i.amount::numeric,
           i.currency,
-          i.issue_date,
-          i.due_date,
-          i.paid_date,
+          i.issue_date::text,
+          i.due_date::text,
+          i.paid_date::text,
           i.description,
           i.created_at,
-          i.updated_at,
-          cd.customer_name
+          i.updated_at
         FROM public.invoices i
-        LEFT JOIN public.customers_details cd ON i.customer_id = cd.id
         ORDER BY i.created_at DESC;
       `;
-      const allResult = await query<InvoiceRecord & { customer_name?: string | null }>(allSql);
+      const allResult = await query<InvoiceRecord>(allSql);
+      const invoices = allResult.rows.map((r) => ({
+        ...r,
+        amount: Number(r.amount),
+      }));
+
       return {
         statusCode: 200,
         headers: CORS_HEADERS,
         body: JSON.stringify({
           success: true,
-          count: allResult.rows.length,
+          count: invoices.length,
           customerId: "",
-          invoices: allResult.rows,
+          invoices,
         } as GetInvoicesResponse),
       };
     }
 
+    const targetUuid = isUuid(customerId) ? customerId : toDeterministicUuid(customerId);
     const sql = `
       SELECT 
         i.id::text,
@@ -70,43 +85,31 @@ export async function getInvoicesHandler(
         i.status,
         i.amount::numeric,
         i.currency,
-        i.issue_date,
-        i.due_date,
-        i.paid_date,
+        i.issue_date::text,
+        i.due_date::text,
+        i.paid_date::text,
         i.description,
         i.created_at,
         i.updated_at
       FROM public.invoices i
-      WHERE i.customer_id::text = $1
-         OR i.customer_id IN (
-           SELECT c.id 
-           FROM public.customers_details c
-           LEFT JOIN public.users u ON (
-             LOWER(c.client_user_id) = LOWER(u.user_name) 
-             OR LOWER(c.client_user_id) = LOWER(u.email) 
-             OR LOWER(c.client_user_id) = LOWER(u.user_email)
-             OR LOWER(c.client_user_id) = LOWER(u.user_id::text)
-           )
-           WHERE c.id::text = $1 
-              OR LOWER(c.client_user_id) = LOWER($1)
-              OR u.user_id::text = $1
-              OR LOWER(u.user_name) = LOWER($1)
-              OR LOWER(u.email) = LOWER($1)
-              OR LOWER(u.user_email) = LOWER($1)
-         )
+      WHERE i.customer_id::text = $1 OR i.customer_id::text = $2
       ORDER BY i.created_at DESC NULLS LAST;
     `;
 
-    const result = await query<InvoiceRecord>(sql, [customerId]);
+    const result = await query<InvoiceRecord>(sql, [customerId, targetUuid]);
+    const invoices = result.rows.map((r) => ({
+      ...r,
+      amount: Number(r.amount),
+    }));
 
     return {
       statusCode: 200,
       headers: CORS_HEADERS,
       body: JSON.stringify({
         success: true,
-        count: result.rows.length,
+        count: invoices.length,
         customerId,
-        invoices: result.rows,
+        invoices,
       } as GetInvoicesResponse),
     };
   } catch (error: any) {

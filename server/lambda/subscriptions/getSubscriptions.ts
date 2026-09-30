@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { query } from "../db";
 import type {
   APIGatewayProxyEvent,
@@ -13,13 +14,41 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Methods": "GET,OPTIONS",
 };
 
+function isUuid(str: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+}
+
+function toDeterministicUuid(str: string): string {
+  if (isUuid(str)) return str;
+  const hex = crypto.createHash("md5").update(str.trim().toLowerCase()).digest("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
+function mapSubscriptionRow(r: any): SubscriptionRecord {
+  return {
+    id: r.id,
+    customer_id: r.customer_id,
+    customer_name: r.customer_name || null,
+    plan_id: r.plan_id,
+    status: r.status || "active",
+    start_date: r.start_date || null,
+    end_date: r.end_date || null,
+    amount: r.amount != null ? Number(r.amount) : 0,
+    currency: r.currency || "INR",
+    billing_interval: r.billing_interval || "monthly",
+    created_at: r.created_at,
+    updated_at: r.updated_at,
+    plan_name: r.plan_name || null,
+  };
+}
+
 export async function getSubscriptionsHandler(
   event: APIGatewayProxyEvent
 ): Promise<APIGatewayProxyResult> {
   try {
     const params = event.queryStringParameters || {};
     const pathParams = event.pathParameters || {};
-    const customerId = (
+    const rawCustomerId = (
       params.customerId ||
       params.customer_id ||
       params.clientUserId ||
@@ -29,86 +58,76 @@ export async function getSubscriptionsHandler(
       ""
     ).trim();
 
-    if (!customerId) {
+    if (!rawCustomerId) {
       const allSql = `
         SELECT 
           s.id::text,
           s.customer_id::text,
+          s.customer_name,
           s.plan_id::text,
           s.status,
-          s.start_date,
-          s.end_date,
-          s.amount::numeric,
+          s.start_date::text,
+          s.end_date::text,
+          s.amount,
           s.currency,
           s.billing_interval,
-          s.created_at,
-          s.updated_at,
-          p.name as plan_name,
-          cd.customer_name
+          s.created_at::text,
+          s.updated_at::text,
+          p.name as plan_name
         FROM public.subscriptions s
         LEFT JOIN public.plans p ON s.plan_id = p.id
-        LEFT JOIN public.customers_details cd ON s.customer_id = cd.id
         ORDER BY s.created_at DESC NULLS LAST;
       `;
-      const allResult = await query<SubscriptionRecord & { plan_name: string | null; customer_name?: string | null }>(allSql);
+      const allResult = await query(allSql);
+      const mapped = allResult.rows.map(mapSubscriptionRow);
+
       return {
         statusCode: 200,
         headers: CORS_HEADERS,
         body: JSON.stringify({
           success: true,
-          count: allResult.rows.length,
+          count: mapped.length,
           customerId: "",
-          subscriptions: allResult.rows,
+          subscriptions: mapped,
         } as GetSubscriptionsResponse),
       };
     }
+
+    const resolvedUuid = toDeterministicUuid(rawCustomerId);
 
     const sql = `
       SELECT 
         s.id::text,
         s.customer_id::text,
+        s.customer_name,
         s.plan_id::text,
         s.status,
-        s.start_date,
-        s.end_date,
-        s.amount::numeric,
+        s.start_date::text,
+        s.end_date::text,
+        s.amount,
         s.currency,
         s.billing_interval,
-        s.created_at,
-        s.updated_at,
+        s.created_at::text,
+        s.updated_at::text,
         p.name as plan_name
       FROM public.subscriptions s
       LEFT JOIN public.plans p ON s.plan_id = p.id
-      WHERE s.customer_id::text = $1
-         OR s.customer_id IN (
-           SELECT c.id 
-           FROM public.customers_details c
-           LEFT JOIN public.users u ON (
-             LOWER(c.client_user_id) = LOWER(u.user_name) 
-             OR LOWER(c.client_user_id) = LOWER(u.email) 
-             OR LOWER(c.client_user_id) = LOWER(u.user_email)
-             OR LOWER(c.client_user_id) = LOWER(u.user_id::text)
-           )
-           WHERE c.id::text = $1 
-              OR LOWER(c.client_user_id) = LOWER($1)
-              OR u.user_id::text = $1
-              OR LOWER(u.user_name) = LOWER($1)
-              OR LOWER(u.email) = LOWER($1)
-              OR LOWER(u.user_email) = LOWER($1)
-         )
+      WHERE s.customer_id = $1::uuid
+         OR s.customer_id::text = $2
       ORDER BY s.created_at DESC NULLS LAST;
     `;
 
-    const result = await query<SubscriptionRecord>(sql, [customerId]);
+    const result = await query(sql, [resolvedUuid, rawCustomerId]);
+    const mapped = result.rows.map(mapSubscriptionRow);
 
     return {
       statusCode: 200,
       headers: CORS_HEADERS,
       body: JSON.stringify({
         success: true,
-        count: result.rows.length,
-        customerId,
-        subscriptions: result.rows,
+        count: mapped.length,
+        customerId: rawCustomerId,
+        subscriptions: mapped,
       } as GetSubscriptionsResponse),
     };
   } catch (error: any) {

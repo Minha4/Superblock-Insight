@@ -13,6 +13,34 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Methods": "GET,OPTIONS",
 };
 
+function mapProductRow(r: any): ProductRecord {
+  return {
+    id: r.id,
+    client_id: r.client_id || "",
+    client_user_id: r.client_user_id || "",
+    name: r.name,
+    description: r.description || null,
+    category: r.category || "General",
+    hsn: r.hsn || null,
+    barcode_type: r.barcode_type || null,
+    barcode_value: r.barcode_value || null,
+    billing: r.billing || "Usage based",
+    cost: Number(r.cost) || 0,
+    currency: r.currency || "INR",
+    active: Boolean(r.active ?? true),
+    created_by: r.created_by || null,
+    created_at: r.created_at,
+    updated_at: r.updated_at,
+    price: Number(r.price) || 0,
+    sku: r.sku || null,
+    margin: r.margin || null,
+    tax_rate: r.tax_rate != null ? Number(r.tax_rate) : 18,
+    unit: r.unit || "unit",
+    track_inventory: Boolean(r.track_inventory ?? false),
+    stock: Number(r.stock) || 0,
+  };
+}
+
 export async function getProductsHandler(
   event: APIGatewayProxyEvent
 ): Promise<APIGatewayProxyResult> {
@@ -33,21 +61,23 @@ export async function getProductsHandler(
       const allSql = `
         SELECT 
           id, client_id, client_user_id, name, description, category, hsn,
-          barcode_type, barcode_value, billing, cost::numeric, currency,
-          active, created_by, created_at, updated_at, price::numeric,
-          sku, margin, tax_rate::numeric, unit, track_inventory, stock::numeric
+          barcode_type, barcode_value, billing, cost, currency,
+          active, created_by, created_at, updated_at, price,
+          sku, margin, tax_rate, unit, track_inventory, stock
         FROM public.products
         ORDER BY created_at DESC;
       `;
-      const allResult = await query<ProductRecord>(allSql);
+      const allResult = await query(allSql);
+      const mapped = allResult.rows.map(mapProductRow);
+
       return {
         statusCode: 200,
         headers: CORS_HEADERS,
         body: JSON.stringify({
           success: true,
-          count: allResult.rows.length,
+          count: mapped.length,
           customerId: "",
-          products: allResult.rows,
+          products: mapped,
         } as GetProductsResponse),
       };
     }
@@ -55,45 +85,27 @@ export async function getProductsHandler(
     const sql = `
       SELECT 
         id, client_id, client_user_id, name, description, category, hsn,
-        barcode_type, barcode_value, billing, cost::numeric, currency,
-        active, created_by, created_at, updated_at, price::numeric,
-        sku, margin, tax_rate::numeric, unit, track_inventory, stock::numeric
+        barcode_type, barcode_value, billing, cost, currency,
+        active, created_by, created_at, updated_at, price,
+        sku, margin, tax_rate, unit, track_inventory, stock
       FROM public.products
       WHERE LOWER(client_user_id) = LOWER($1)
-         OR client_id = $1
-         OR client_user_id IN (
-           SELECT cd.client_user_id 
-           FROM public.customers_details cd 
-           LEFT JOIN public.users u ON (
-             LOWER(cd.client_user_id) = LOWER(u.user_name) 
-             OR LOWER(cd.client_user_id) = LOWER(u.email) 
-             OR LOWER(cd.client_user_id) = LOWER(u.user_email)
-             OR LOWER(cd.client_user_id) = LOWER(u.user_id::text)
-           )
-           WHERE cd.id::text = $1 
-              OR LOWER(cd.client_user_id) = LOWER($1)
-              OR u.user_id::text = $1
-         )
-         OR LOWER(client_user_id) IN (
-           SELECT LOWER(u.user_name)
-           FROM public.users u
-           WHERE u.user_id::text = $1
-              OR LOWER(u.user_email) = LOWER($1)
-              OR LOWER(u.email) = LOWER($1)
-         )
+         OR LOWER(client_id) = LOWER($1)
+         OR LOWER(id) = LOWER($1)
       ORDER BY created_at DESC;
     `;
 
-    const result = await query<ProductRecord>(sql, [customerId]);
+    const result = await query(sql, [customerId]);
+    const mapped = result.rows.map(mapProductRow);
 
     return {
       statusCode: 200,
       headers: CORS_HEADERS,
       body: JSON.stringify({
         success: true,
-        count: result.rows.length,
+        count: mapped.length,
         customerId,
-        products: result.rows,
+        products: mapped,
       } as GetProductsResponse),
     };
   } catch (error: any) {

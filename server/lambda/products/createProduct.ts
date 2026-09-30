@@ -15,17 +15,6 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Methods": "POST,OPTIONS",
 };
 
-async function resolveClientUserId(identifier: string): Promise<string | null> {
-  const sql = `
-    SELECT client_user_id 
-    FROM public.customers_details 
-    WHERE id::text = $1 OR LOWER(client_user_id) = LOWER($1)
-    LIMIT 1;
-  `;
-  const res = await query<{ client_user_id: string }>(sql, [identifier]);
-  return res.rows.length > 0 ? res.rows[0].client_user_id : null;
-}
-
 export async function createProductHandler(
   event: APIGatewayProxyEvent
 ): Promise<APIGatewayProxyResult> {
@@ -56,28 +45,7 @@ export async function createProductHandler(
       };
     }
 
-    const rawCustomerId = (
-      payload.customerId ||
-      payload.clientUserId ||
-      payload.client_user_id ||
-      payload.clientId ||
-      payload.client_id ||
-      ""
-    ).trim();
-
     const name = (payload.name || "").trim();
-
-    if (!rawCustomerId) {
-      return {
-        statusCode: 400,
-        headers: CORS_HEADERS,
-        body: JSON.stringify({
-          success: false,
-          error: "Missing required field: 'customerId'",
-        } as CreateProductResponse),
-      };
-    }
-
     if (!name) {
       return {
         statusCode: 400,
@@ -89,17 +57,14 @@ export async function createProductHandler(
       };
     }
 
-    const clientUserId = await resolveClientUserId(rawCustomerId);
-    if (!clientUserId) {
-      return {
-        statusCode: 404,
-        headers: CORS_HEADERS,
-        body: JSON.stringify({
-          success: false,
-          error: `Customer not found for identifier: '${rawCustomerId}'`,
-        } as CreateProductResponse),
-      };
-    }
+    const clientUserId = (
+      payload.customerId ||
+      payload.clientUserId ||
+      payload.client_user_id ||
+      payload.clientId ||
+      payload.client_id ||
+      "superblock"
+    ).trim();
 
     const randStr = crypto.randomBytes(3).toString("hex");
     const id = payload.id || `prod_${Date.now()}_${randStr}`;
@@ -109,7 +74,7 @@ export async function createProductHandler(
     const hsn = payload.hsn || null;
     const barcodeType = payload.barcodeType || payload.barcode_type || null;
     const barcodeValue = payload.barcodeValue || payload.barcode_value || null;
-    const billing = payload.billing || null;
+    const billing = payload.billing || "Usage based";
     const cost = typeof payload.cost === "number" ? payload.cost : 0;
     const currency = payload.currency || "INR";
     const active = payload.active ?? true;
@@ -136,23 +101,50 @@ export async function createProductHandler(
       )
       RETURNING 
         id, client_id, client_user_id, name, description, category, hsn,
-        barcode_type, barcode_value, billing, cost::numeric, currency, active,
-        created_by, created_at, updated_at, price::numeric, sku, margin,
-        tax_rate::numeric, unit, track_inventory, stock::numeric;
+        barcode_type, barcode_value, billing, cost, currency, active,
+        created_by, created_at, updated_at, price, sku, margin,
+        tax_rate, unit, track_inventory, stock;
     `;
 
-    const result = await query<ProductRecord>(insertSql, [
+    const result = await query(insertSql, [
       id, clientId, clientUserId, name, description, category, hsn,
       barcodeType, barcodeValue, billing, cost, currency, active,
       createdBy, price, sku, margin, taxRate, unit, trackInventory, stock
     ]);
+
+    const r = result.rows[0];
+    const createdProduct: ProductRecord = {
+      id: r.id,
+      client_id: r.client_id || "",
+      client_user_id: r.client_user_id || "",
+      name: r.name,
+      description: r.description || null,
+      category: r.category || "General",
+      hsn: r.hsn || null,
+      barcode_type: r.barcode_type || null,
+      barcode_value: r.barcode_value || null,
+      billing: r.billing || "Usage based",
+      cost: Number(r.cost) || 0,
+      currency: r.currency || "INR",
+      active: Boolean(r.active ?? true),
+      created_by: r.created_by || null,
+      created_at: r.created_at,
+      updated_at: r.updated_at,
+      price: Number(r.price) || 0,
+      sku: r.sku || null,
+      margin: r.margin || null,
+      tax_rate: r.tax_rate != null ? Number(r.tax_rate) : 18,
+      unit: r.unit || "unit",
+      track_inventory: Boolean(r.track_inventory ?? false),
+      stock: Number(r.stock) || 0,
+    };
 
     return {
       statusCode: 201,
       headers: CORS_HEADERS,
       body: JSON.stringify({
         success: true,
-        product: result.rows[0],
+        product: createdProduct,
       } as CreateProductResponse),
     };
   } catch (error: any) {

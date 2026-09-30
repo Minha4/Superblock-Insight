@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { query } from "../db";
 import type {
   APIGatewayProxyEvent,
@@ -13,7 +14,17 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Methods": "GET,OPTIONS",
 };
 
+function isUuid(str: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    str
+  );
+}
 
+function toDeterministicUuid(str: string): string {
+  if (isUuid(str)) return str;
+  const hex = crypto.createHash("md5").update(str.trim().toLowerCase()).digest("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
 
 /**
  * Lambda handler to GET notes for a specific customer.
@@ -53,8 +64,9 @@ export async function getNotesHandler(
     }
 
     let notes: NoteRecord[] = [];
+    const targetUuid = isUuid(customerId) ? customerId : toDeterministicUuid(customerId);
 
-    // Parameterized query resolving customers_details.id, client_user_id, or Cognito user_id
+    // Direct query against public.notes without requiring legacy customers_details table
     const sql = `
       SELECT 
         n.id::text,
@@ -65,23 +77,10 @@ export async function getNotesHandler(
         n.created_at,
         n.updated_at
       FROM public.notes n
-      WHERE n.customer_id::text = $1
-         OR n.customer_id IN (
-           SELECT c.id 
-           FROM public.customers_details c
-           LEFT JOIN public.users u ON (
-             LOWER(c.client_user_id) = LOWER(u.user_name) 
-             OR LOWER(c.client_user_id) = LOWER(u.email) 
-             OR LOWER(c.client_user_id) = LOWER(u.user_email)
-             OR LOWER(c.client_user_id) = LOWER(u.user_id::text)
-           )
-           WHERE c.id::text = $1 
-              OR LOWER(c.client_user_id) = LOWER($1)
-              OR u.user_id::text = $1
-         )
+      WHERE n.customer_id::text = $1 OR n.customer_id::text = $2
       ORDER BY n.created_at DESC;
     `;
-    const result = await query<NoteRecord>(sql, [customerId]);
+    const result = await query<NoteRecord>(sql, [customerId, targetUuid]);
     notes = result.rows;
 
     const responseBody: GetNotesResponse = {

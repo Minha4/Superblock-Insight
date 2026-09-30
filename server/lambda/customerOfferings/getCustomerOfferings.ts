@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { query } from "../db";
 import type {
   APIGatewayProxyEvent,
@@ -13,13 +14,23 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Methods": "GET,OPTIONS",
 };
 
+function isUuid(str: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+}
+
+function toDeterministicUuid(str: string): string {
+  if (isUuid(str)) return str;
+  const hex = crypto.createHash("md5").update(str.trim().toLowerCase()).digest("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
 export async function getCustomerOfferingsHandler(
   event: APIGatewayProxyEvent
 ): Promise<APIGatewayProxyResult> {
   try {
     const params = event.queryStringParameters || {};
     const pathParams = event.pathParameters || {};
-    const customerId = (
+    const rawCustomerId = (
       params.customerId ||
       params.customer_id ||
       params.clientUserId ||
@@ -29,19 +40,36 @@ export async function getCustomerOfferingsHandler(
       ""
     ).trim();
 
-    if (!customerId) {
+    if (!rawCustomerId) {
+      const allSql = `
+        SELECT 
+          co.id::text,
+          co.customer_id::text,
+          co.product_id,
+          co.offering_name,
+          co.status,
+          co.start_date::text,
+          co.end_date::text,
+          co.created_at::text,
+          co.updated_at::text
+        FROM public.customer_offerings co
+        ORDER BY co.created_at DESC NULLS LAST;
+      `;
+      const allResult = await query<CustomerOfferingRecord>(allSql);
       return {
-        statusCode: 400,
+        statusCode: 200,
         headers: CORS_HEADERS,
         body: JSON.stringify({
-          success: false,
-          count: 0,
+          success: true,
+          count: allResult.rows.length,
           customerId: "",
-          offerings: [],
-          error: "Missing required parameter: 'customerId' (UUID or client_user_id)",
+          offerings: allResult.rows,
+          customerOfferings: allResult.rows,
         } as GetCustomerOfferingsResponse),
       };
     }
+
+    const resolvedUuid = toDeterministicUuid(rawCustomerId);
 
     const sql = `
       SELECT 
@@ -50,29 +78,17 @@ export async function getCustomerOfferingsHandler(
         co.product_id,
         co.offering_name,
         co.status,
-        co.start_date,
-        co.end_date,
-        co.created_at,
-        co.updated_at
+        co.start_date::text,
+        co.end_date::text,
+        co.created_at::text,
+        co.updated_at::text
       FROM public.customer_offerings co
-      WHERE co.customer_id::text = $1
-         OR co.customer_id IN (
-           SELECT cd.id 
-           FROM public.customers_details cd
-           LEFT JOIN public.users u ON (
-             LOWER(cd.client_user_id) = LOWER(u.user_name) 
-             OR LOWER(cd.client_user_id) = LOWER(u.email) 
-             OR LOWER(cd.client_user_id) = LOWER(u.user_email)
-             OR LOWER(cd.client_user_id) = LOWER(u.user_id::text)
-           )
-           WHERE cd.id::text = $1 
-              OR LOWER(cd.client_user_id) = LOWER($1)
-              OR u.user_id::text = $1
-         )
+      WHERE co.customer_id = $1::uuid
+         OR co.customer_id::text = $2
       ORDER BY co.created_at DESC NULLS LAST;
     `;
 
-    const result = await query<CustomerOfferingRecord>(sql, [customerId]);
+    const result = await query<CustomerOfferingRecord>(sql, [resolvedUuid, rawCustomerId]);
 
     return {
       statusCode: 200,
@@ -80,7 +96,7 @@ export async function getCustomerOfferingsHandler(
       body: JSON.stringify({
         success: true,
         count: result.rows.length,
-        customerId,
+        customerId: rawCustomerId,
         offerings: result.rows,
         customerOfferings: result.rows,
       } as GetCustomerOfferingsResponse),
