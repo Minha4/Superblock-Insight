@@ -1650,40 +1650,20 @@ app.use(express.json());
           success: true,
           offline: false,
           teamMember: responseData.teamMember,
+          deliveryDetails: responseData.deliveryDetails,
         });
       }
-      // Offline fallback
-      const initials = (body.name || "U").split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase();
-      const newMember = {
-        id: body.id || `tm-${Date.now()}`,
-        name: body.name || "New Member",
-        initials: body.initials || initials,
-        email: body.email || "member@superblock.chat",
-        role: body.role || "Customer Success",
-        department: body.department || "Customer",
-        customers: body.customers ?? 0,
-        status: body.status || "Active",
-        lastActive: "Just now",
-      };
-      fallbackTeamMembers = [newMember, ...fallbackTeamMembers.filter((m) => m.id !== newMember.id && m.email !== newMember.email)];
-      return res.status(200).json({ success: true, offline: true, teamMember: newMember });
+
+      return res.status(result.statusCode || 400).json({
+        success: false,
+        error: responseData?.error || "Failed to invite team member",
+      });
     } catch (error: any) {
-      console.warn("POST /api/team failed, storing in fallback:", error?.message);
-      const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
-      const initials = (body.name || "U").split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase();
-      const newMember = {
-        id: body.id || `tm-${Date.now()}`,
-        name: body.name || "New Member",
-        initials: body.initials || initials,
-        email: body.email || "member@superblock.chat",
-        role: body.role || "Customer Success",
-        department: body.department || "Customer",
-        customers: body.customers ?? 0,
-        status: body.status || "Active",
-        lastActive: "Just now",
-      };
-      fallbackTeamMembers = [newMember, ...fallbackTeamMembers.filter((m) => m.id !== newMember.id && m.email !== newMember.email)];
-      return res.status(200).json({ success: true, offline: true, teamMember: newMember });
+      console.error("POST /api/team error:", error);
+      return res.status(500).json({
+        success: false,
+        error: error?.message || "Internal server error during team invitation",
+      });
     }
   });
 

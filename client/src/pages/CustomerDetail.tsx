@@ -290,28 +290,21 @@ export default function CustomerDetail() {
     const customerId = rawCustomer.id;
     const customerName = rawCustomer.company || "";
 
-    const isLocal =
-      typeof window !== "undefined" &&
-      (window.location.hostname === "localhost" ||
-        window.location.hostname === "127.0.0.1");
-
     const fetchOperationsData = async () => {
       try {
         let opsData: any = null;
-        if (isLocal) {
-          try {
-            const res = await fetch(
-              `/api/customer-operations?customerId=${encodeURIComponent(customerId)}&customerName=${encodeURIComponent(customerName)}&refresh=true&_t=${Date.now()}`
-            );
-            if (res.ok) {
-              const data = await res.json();
-              if (data?.success) {
-                opsData = data;
-              }
+        try {
+          const res = await fetch(
+            `/api/customer-operations?customerId=${encodeURIComponent(customerId)}&customerName=${encodeURIComponent(customerName)}&refresh=true&_t=${Date.now()}`
+          );
+          if (res.ok) {
+            const data = await res.json();
+            if (data?.success) {
+              opsData = data;
             }
-          } catch (err) {
-            console.warn("Could not fetch customer operations locally:", err);
           }
+        } catch (err) {
+          console.warn("Could not fetch customer operations:", err);
         }
 
         // Fetch official notes using database API / customeranalyticsdashaboard

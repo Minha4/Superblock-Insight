@@ -152,78 +152,30 @@ export async function getCustomerNotes(
   if (!customerId) return [];
 
   const headers = await getAuthHeaders();
+  let serverNotes: NoteRecord[] = [];
 
-  // Local development: use Express proxy with safe fallback
-  if (isLocalhost()) {
-    let serverNotes: NoteRecord[] = [];
-    try {
-      const res = await fetch(
-        `/api/notes?customerId=${encodeURIComponent(customerId)}`,
-        { method: "GET", headers }
-      );
-      if (res.ok) {
-        const data = (await res.json().catch(() => null)) as GetNotesResponse | null;
-        if (Array.isArray(data?.notes)) {
-          serverNotes = data.notes;
-        }
-      }
-    } catch (err) {
-      console.warn("Local notes fetch failed (database offline), using fallback:", err);
-    }
-    const local = getLocalNotes(customerId);
-    const serverIds = new Set(serverNotes.map((n) => n.id));
-    return [...local.filter((l) => !serverIds.has(l.id)), ...serverNotes];
-  }
-
-  // Production Strategy 1: Path-based on customeranalyticsdashaboard/notes
   try {
-    const dashboardUrl = `${PRODUCTION_DASHBOARD_BASE}/notes?customerId=${encodeURIComponent(customerId)}`;
-    const res = await fetch(dashboardUrl, { method: "GET", headers });
-    if (res.ok) {
-      const data = (await res.json().catch(() => null)) as GetNotesResponse | null;
-      if (data?.success && Array.isArray(data?.notes)) {
-        return data.notes;
-      }
-    }
-  } catch (err) {
-    console.warn("Direct fetch from customeranalyticsdashaboard/notes failed, attempting action param fallback:", err);
-  }
-
-  // Production Strategy 2: Query-based on customeranalyticsdashaboard?action=notes
-  try {
-    const actionUrl = `${PRODUCTION_DASHBOARD_BASE}?action=notes&customerId=${encodeURIComponent(customerId)}`;
-    const res = await fetch(actionUrl, { method: "GET", headers });
-    if (res.ok) {
-      const data = (await res.json().catch(() => null)) as GetNotesResponse | null;
-      if (data?.success && Array.isArray(data?.notes)) {
-        return data.notes;
-      }
-    }
-  } catch (err) {
-    console.warn("Fetch from customeranalyticsdashaboard?action=notes failed, attempting customeranalytics fallback:", err);
-  }
-
-  // Production Strategy 3: Fallback to customeranalytics?action=notes
-  const customerApiUrl = `${PRODUCTION_CUSTOMER_BASE}?action=notes&customerId=${encodeURIComponent(customerId)}`;
-  const res = await fetch(customerApiUrl, { method: "GET", headers });
-
-  if (!res.ok) {
-    const errBody = await res.text().catch(() => "");
-    throw new Error(
-      `Failed to fetch notes (${res.status}): ${errBody || res.statusText}`
+    const res = await fetch(
+      `/api/notes?customerId=${encodeURIComponent(customerId)}`,
+      { method: "GET", headers }
     );
+    if (res.ok) {
+      const data = (await res.json().catch(() => null)) as GetNotesResponse | null;
+      if (Array.isArray(data?.notes)) {
+        serverNotes = data.notes;
+      }
+    }
+  } catch (err) {
+    console.warn("Notes fetch failed:", err);
   }
 
-  const data = (await res.json().catch(() => null)) as GetNotesResponse | null;
-  if (!data?.success || !Array.isArray(data?.notes)) {
-    throw new Error(data?.error || "Invalid response format from notes API");
-  }
-
-  return data.notes;
+  const local = getLocalNotes(customerId);
+  const serverIds = new Set(serverNotes.map((n) => n.id));
+  return [...local.filter((l) => !serverIds.has(l.id)), ...serverNotes];
 }
 
 /**
- * Creates a customer note persisting to PostgreSQL through the authenticated customer analytics endpoint.
+ * Creates a customer note persisting to PostgreSQL through the unified /api/notes endpoint.
  */
 export async function createCustomerNote(input: {
   customerId: string;
@@ -244,89 +196,33 @@ export async function createCustomerNote(input: {
     createdBy: input.createdBy || null,
   };
 
-  if (isLocalhost()) {
-    try {
-      const res = await fetch("/api/notes", {
-        method: "POST",
-        headers,
-        body: JSON.stringify(payload),
-      });
-      const data = (await res.json().catch(() => null)) as MutateNoteResponse | null;
-      if (res.ok && data?.success && data?.note) {
-        saveLocalNote(input.customerId, data.note);
-        return data.note;
-      }
-      if (!res.ok) {
-        console.warn(`Local /api/notes returned ${res.status} (${data?.error || "network error"}), falling back to local storage.`);
-      }
-    } catch (err: any) {
-      console.warn("Local POST /api/notes failed with network error, saving to local storage fallback:", err?.message || err);
-    }
-
-    // Offline / DB maintenance fallback: persist directly to localStorage
-    const localNote: NoteRecord = {
-      id: `local-note-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-      customer_id: input.customerId,
-      title: input.title?.trim() || "Customer Note",
-      content: input.content.trim(),
-      created_by: input.createdBy || "Admin User",
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-    saveLocalNote(input.customerId, localNote);
-    return localNote;
-  }
-
-  // Production Strategy 1: Primary target is official customeranalyticsdashaboard/notes
   try {
-    const dashboardUrl = `${PRODUCTION_DASHBOARD_BASE}/notes`;
-    const res = await fetch(dashboardUrl, {
+    const res = await fetch("/api/notes", {
       method: "POST",
       headers,
       body: JSON.stringify(payload),
     });
     const data = (await res.json().catch(() => null)) as MutateNoteResponse | null;
     if (res.ok && data?.success && data?.note) {
+      saveLocalNote(input.customerId, data.note);
       return data.note;
     }
-  } catch (err) {
-    console.warn("POST to customeranalyticsdashaboard/notes failed, attempting action param fallback:", err);
+  } catch (err: any) {
+    console.warn("POST /api/notes failed:", err?.message || err);
   }
 
-  // Production Strategy 2: Root endpoint with action parameter
-  try {
-    const actionUrl = `${PRODUCTION_DASHBOARD_BASE}?action=create_note`;
-    const res = await fetch(actionUrl, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(payload),
-    });
-    const data = (await res.json().catch(() => null)) as MutateNoteResponse | null;
-    if (res.ok && data?.success && data?.note) {
-      return data.note;
-    }
-  } catch (err) {
-    console.warn("POST to customeranalyticsdashaboard?action=create_note failed, attempting customeranalytics fallback:", err);
-  }
-
-  // Production Strategy 3: Fallback to customeranalytics?action=create_note
-  const customerApiUrl = `${PRODUCTION_CUSTOMER_BASE}?action=create_note`;
-  const res = await fetch(customerApiUrl, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(payload),
-  });
-
-  const data = (await res.json().catch(() => null)) as MutateNoteResponse | null;
-  if (!res.ok || !data?.success) {
-    throw new Error(data?.error || `Failed to create note (${res.status})`);
-  }
-
-  if (!data.note) {
-    throw new Error("Backend did not return created note record");
-  }
-
-  return data.note;
+  // Fallback: persist directly to localStorage so it survives reload
+  const localNote: NoteRecord = {
+    id: `note-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    customer_id: input.customerId,
+    title: input.title?.trim() || "Customer Note",
+    content: input.content.trim(),
+    created_by: input.createdBy || "Admin User",
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+  saveLocalNote(input.customerId, localNote);
+  return localNote;
 }
 
 /**
@@ -346,49 +242,8 @@ export async function updateCustomerNote(
     content: input.content?.trim() || "",
   };
 
-  if (isLocalhost()) {
-    try {
-      const res = await fetch(`/api/notes/${encodeURIComponent(noteId)}`, {
-        method: "PUT",
-        headers,
-        body: JSON.stringify(payload),
-      });
-      const data = (await res.json().catch(() => null)) as MutateNoteResponse | null;
-      if (res.ok && data?.success && data?.note) {
-        return data.note;
-      }
-    } catch (err) {
-      console.warn("Local update note failed (database offline), applying to local storage:", err);
-    }
-    // Fallback: update any matching note in localStorage
-    if (typeof window !== "undefined") {
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (key?.startsWith("sb_notes_")) {
-          const custId = key.replace("sb_notes_", "");
-          const updated = updateLocalNote(custId, noteId, {
-            title: input.title,
-            content: input.content,
-          });
-          if (updated) return updated;
-        }
-      }
-    }
-    return {
-      id: noteId,
-      customer_id: "",
-      title: input.title?.trim() || null,
-      content: input.content?.trim() || "",
-      created_by: "Admin User",
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-  }
-
-  // Production Strategy 1: Primary target is official customeranalyticsdashaboard/notes/:id
   try {
-    const dashboardUrl = `${PRODUCTION_DASHBOARD_BASE}/notes/${encodeURIComponent(noteId)}`;
-    const res = await fetch(dashboardUrl, {
+    const res = await fetch(`/api/notes/${encodeURIComponent(noteId)}`, {
       method: "PUT",
       headers,
       body: JSON.stringify(payload),
@@ -398,43 +253,33 @@ export async function updateCustomerNote(
       return data.note;
     }
   } catch (err) {
-    console.warn("PUT to customeranalyticsdashaboard/notes failed, attempting action fallback:", err);
+    console.warn("PUT /api/notes failed:", err);
   }
 
-  // Production Strategy 2: Action parameter on root customeranalyticsdashaboard
-  try {
-    const actionUrl = `${PRODUCTION_DASHBOARD_BASE}?action=update_note&id=${encodeURIComponent(noteId)}`;
-    const res = await fetch(actionUrl, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(payload),
-    });
-    const data = (await res.json().catch(() => null)) as MutateNoteResponse | null;
-    if (res.ok && data?.success && data?.note) {
-      return data.note;
+  // Fallback: update any matching note in localStorage
+  if (typeof window !== "undefined") {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key?.startsWith("sb_notes_")) {
+        const custId = key.replace("sb_notes_", "");
+        const updated = updateLocalNote(custId, noteId, {
+          title: input.title,
+          content: input.content,
+        });
+        if (updated) return updated;
+      }
     }
-  } catch (err) {
-    console.warn("POST to customeranalyticsdashaboard?action=update_note failed, attempting customeranalytics fallback:", err);
   }
 
-  // Production Strategy 3: Fallback to customeranalytics with action=update_note
-  const customerApiUrl = `${PRODUCTION_CUSTOMER_BASE}?action=update_note&id=${encodeURIComponent(noteId)}`;
-  const res = await fetch(customerApiUrl, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(payload),
-  });
-
-  const data = (await res.json().catch(() => null)) as MutateNoteResponse | null;
-  if (!res.ok || !data?.success) {
-    throw new Error(data?.error || `Failed to update note (${res.status})`);
-  }
-
-  if (!data.note) {
-    throw new Error("Backend did not return updated note record");
-  }
-
-  return data.note;
+  return {
+    id: noteId,
+    customer_id: "",
+    title: input.title?.trim() || null,
+    content: input.content?.trim() || "",
+    created_by: "Admin User",
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
 }
 
 /**
@@ -445,82 +290,40 @@ export async function deleteCustomerNote(noteId: string): Promise<boolean> {
 
   const headers = await getAuthHeaders();
 
-  if (isLocalhost()) {
-    try {
-      const res = await fetch(`/api/notes/${encodeURIComponent(noteId)}`, {
-        method: "DELETE",
-        headers,
-      });
-      const data = (await res.json().catch(() => null)) as MutateNoteResponse | null;
-      if (res.ok && data?.success) {
-        // success
-      }
-    } catch (err) {
-      console.warn("Local delete note failed (database offline), removing from local storage:", err);
-    }
-    // Also remove from any customer's localStorage
-    if (typeof window !== "undefined") {
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (key?.startsWith("sb_notes_")) {
-          const raw = localStorage.getItem(key);
-          if (raw && raw.includes(noteId)) {
-            try {
-              const list = JSON.parse(raw);
-              const filtered = list.filter((n: any) => n.id !== noteId);
-              localStorage.setItem(key, JSON.stringify(filtered));
-              const custId = key.replace("sb_notes_", "");
-              window.dispatchEvent(new CustomEvent("customer-note-created", { detail: { customerId: custId, noteId } }));
-            } catch {}
-          }
-        }
-      }
-    }
-    return true;
-  }
-
-  // Production Strategy 1: Primary target is official customeranalyticsdashaboard/notes/:id
   try {
-    const dashboardUrl = `${PRODUCTION_DASHBOARD_BASE}/notes/${encodeURIComponent(noteId)}`;
-    const res = await fetch(dashboardUrl, {
+    const res = await fetch(`/api/notes/${encodeURIComponent(noteId)}`, {
       method: "DELETE",
       headers,
     });
     const data = (await res.json().catch(() => null)) as MutateNoteResponse | null;
     if (res.ok && data?.success) {
-      return true;
+      // success
     }
   } catch (err) {
-    console.warn("DELETE to customeranalyticsdashaboard/notes failed, attempting action fallback:", err);
+    console.warn("DELETE /api/notes failed:", err);
   }
 
-  // Production Strategy 2: Action parameter on root customeranalyticsdashaboard
-  try {
-    const actionUrl = `${PRODUCTION_DASHBOARD_BASE}?action=delete_note&id=${encodeURIComponent(noteId)}`;
-    const res = await fetch(actionUrl, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ action: "delete_note", id: noteId }),
-    });
-    const data = (await res.json().catch(() => null)) as MutateNoteResponse | null;
-    if (res.ok && data?.success) {
-      return true;
+  // Also remove from any customer's localStorage
+  if (typeof window !== "undefined") {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key?.startsWith("sb_notes_")) {
+        const raw = localStorage.getItem(key);
+        if (raw && raw.includes(noteId)) {
+          try {
+            const list = JSON.parse(raw);
+            const filtered = list.filter((n: any) => n.id !== noteId);
+            localStorage.setItem(key, JSON.stringify(filtered));
+            const custId = key.replace("sb_notes_", "");
+            window.dispatchEvent(
+              new CustomEvent("customer-note-created", {
+                detail: { customerId: custId, noteId },
+              })
+            );
+          } catch {}
+        }
+      }
     }
-  } catch (err) {
-    console.warn("POST to customeranalyticsdashaboard?action=delete_note failed, attempting customeranalytics fallback:", err);
-  }
-
-  // Production Strategy 3: Fallback to customeranalytics with action=delete_note
-  const customerApiUrl = `${PRODUCTION_CUSTOMER_BASE}?action=delete_note&id=${encodeURIComponent(noteId)}`;
-  const res = await fetch(customerApiUrl, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ action: "delete_note", id: noteId }),
-  });
-
-  const data = (await res.json().catch(() => null)) as MutateNoteResponse | null;
-  if (!res.ok || !data?.success) {
-    throw new Error(data?.error || `Failed to delete note (${res.status})`);
   }
 
   return true;

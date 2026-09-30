@@ -1,5 +1,27 @@
 [
   {
+    "id": "INV-TEST-6260",
+    "invoice_number": "INV-TEST-6260",
+    "invoiceNumber": "INV-TEST-6260",
+    "customer": "Superblock Customer",
+    "customer_name": "Superblock Customer",
+    "customerId": "2853e701-5a54-46c9-ad8e-6783b7619598",
+    "customer_id": "2853e701-5a54-46c9-ad8e-6783b7619598",
+    "product": "Automated Test Invoice",
+    "description": "Automated Test Invoice",
+    "date": "Sep 30, 2026",
+    "issue_date": "2026-09-30",
+    "dueDate": "Oct 14, 2026",
+    "due_date": "2026-10-14",
+    "amount": 45000,
+    "tax": 8100,
+    "total": 53100,
+    "status": "Sent",
+    "currency": "INR",
+    "created_at": "2026-09-30T10:57:05.776Z",
+    "updated_at": "2026-09-30T10:57:05.776Z"
+  },
+  {
     "id": "123",
     "invoice_number": "123",
     "invoiceNumber": "123",

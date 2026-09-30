@@ -140,41 +140,39 @@ export async function inviteTeamMember(input: Partial<TeamMemberItem>): Promise<
     updatedAt: new Date().toISOString(),
   };
 
-  try {
-    const res = await fetch("/api/team", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        id: savedMember.id,
-        name: savedMember.name,
-        email: savedMember.email,
-        role: savedMember.role,
-        department: savedMember.department,
-        customers: savedMember.customers,
-        status: savedMember.status,
-      }),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (data?.success && data?.teamMember) {
-        savedMember = {
-          id: data.teamMember.id,
-          name: data.teamMember.name,
-          initials: getInitials(data.teamMember.name),
-          email: data.teamMember.email,
-          role: data.teamMember.role || savedMember.role,
-          department: savedMember.department,
-          customers: savedMember.customers,
-          status: savedMember.status,
-          lastActive: "Just now",
-          createdAt: data.teamMember.created_at || savedMember.createdAt,
-          updatedAt: new Date().toISOString(),
-        };
-      }
-    }
-  } catch (err) {
-    console.warn("Backend POST /api/team failed (DB offline), persisting to local storage:", err);
+  const res = await fetch("/api/team", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      id: savedMember.id,
+      name: savedMember.name,
+      email: savedMember.email,
+      role: savedMember.role,
+      department: savedMember.department,
+      customers: savedMember.customers,
+      status: savedMember.status,
+    }),
+  });
+
+  const data = await res.json().catch(() => null);
+
+  if (!res.ok || !data?.success || !data?.teamMember) {
+    throw new Error(data?.error || `Failed to invite team member (${res.status})`);
   }
+
+  savedMember = {
+    id: data.teamMember.id,
+    name: data.teamMember.name,
+    initials: getInitials(data.teamMember.name),
+    email: data.teamMember.email,
+    role: data.teamMember.role || savedMember.role,
+    department: savedMember.department,
+    customers: savedMember.customers,
+    status: savedMember.status,
+    lastActive: "Just now",
+    createdAt: data.teamMember.created_at || savedMember.createdAt,
+    updatedAt: new Date().toISOString(),
+  };
 
   const existing = loadLocalTeamMembers();
   const updated = [savedMember, ...existing.filter((m) => m.id !== savedMember.id && m.email !== savedMember.email)];

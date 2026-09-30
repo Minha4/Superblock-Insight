@@ -68,11 +68,13 @@ async function getDbCredentials(): Promise<{ username: string; password: string 
 
   loadEnv();
 
-  // 1. Supabase PostgreSQL credentials (priority for Notes & Meetings)
-  if (process.env.SUPABASE_DB_HOST && process.env.SUPABASE_DB_PASSWORD) {
+  // 1. Supabase PostgreSQL credentials (priority for Notes, Meetings, Offerings, Invoices, Team, Products, Plans, Subscriptions)
+  const supabaseHost = process.env.SUPABASE_DB_HOST || "db.yobnnvcdorqzvgjugvzr.supabase.co";
+  const supabasePassword = process.env.SUPABASE_DB_PASSWORD || "09821minha...";
+  if (supabaseHost && supabasePassword) {
     cachedCredentials = {
       username: process.env.SUPABASE_DB_USER || "postgres",
-      password: process.env.SUPABASE_DB_PASSWORD,
+      password: supabasePassword,
     };
     return cachedCredentials as { username: string; password: string };
   }
@@ -213,10 +215,11 @@ export async function getPool(): Promise<Pool> {
   const creds = await getDbCredentials();
 
   // 2. Check if Supabase PostgreSQL configuration is active
-  const isSupabase = Boolean(process.env.SUPABASE_DB_HOST);
+  const supabaseHost = process.env.SUPABASE_DB_HOST || "db.yobnnvcdorqzvgjugvzr.supabase.co";
+  const isSupabase = Boolean(supabaseHost);
 
   let host = isSupabase
-    ? process.env.SUPABASE_DB_HOST!
+    ? supabaseHost
     : process.env.DB_HOST || "127.0.0.1";
 
   let port = parseInt(
@@ -246,7 +249,7 @@ export async function getPool(): Promise<Pool> {
   }
 
   const password = isSupabase
-    ? (process.env.SUPABASE_DB_PASSWORD || creds.password)
+    ? (process.env.SUPABASE_DB_PASSWORD || creds.password || "09821minha...")
     : creds.password;
 
   const maxPoolSize = parseInt(process.env.DB_POOL_MAX || (isSupabase ? "5" : "2"), 10);

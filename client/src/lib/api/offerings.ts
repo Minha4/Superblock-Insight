@@ -126,51 +126,19 @@ export async function getCustomerOfferings(
 
   let serverOfferings: CustomerOfferingRecord[] = [];
 
-  if (isLocalhost()) {
-    try {
-      const response = await fetch(
-        `/api/customer-offerings?customerId=${encodeURIComponent(customerId)}`,
-        { method: "GET", headers }
-      );
-      if (response.ok) {
-        const data = (await response.json().catch(() => null)) as OfferingsResponse | null;
-        if (data?.success && Array.isArray(data.offerings)) {
-          serverOfferings = data.offerings;
-        }
-      }
-    } catch (err) {
-      console.warn("Local offerings fetch failed (database offline), using fallback:", err);
-    }
-  } else {
-    // Production Strategy 1: Path-based
-    try {
-      const dashboardUrl = `${PRODUCTION_DASHBOARD_BASE}/customer-offerings?customerId=${encodeURIComponent(customerId)}`;
-      const response = await fetch(dashboardUrl, { method: "GET", headers });
-      if (response.ok) {
-        const data = (await response.json().catch(() => null)) as OfferingsResponse | null;
-        if (data?.success && Array.isArray(data.offerings)) {
-          serverOfferings = data.offerings;
-        }
-      }
-    } catch (err) {
-      console.warn("Direct fetch from customer-offerings failed, attempting action param fallback:", err);
-    }
-
-    // Production Strategy 2: Action param fallback if still empty
-    if (serverOfferings.length === 0) {
-      try {
-        const actionUrl = `${PRODUCTION_DASHBOARD_BASE}?action=customer_offerings&customerId=${encodeURIComponent(customerId)}`;
-        const response = await fetch(actionUrl, { method: "GET", headers });
-        if (response.ok) {
-          const data = (await response.json().catch(() => null)) as OfferingsResponse | null;
-          if (data?.success && Array.isArray(data.offerings)) {
-            serverOfferings = data.offerings;
-          }
-        }
-      } catch (err) {
-        console.warn("Fetch from customeranalyticsdashaboard?action=customer_offerings failed:", err);
+  try {
+    const response = await fetch(
+      `/api/customer-offerings?customerId=${encodeURIComponent(customerId)}`,
+      { method: "GET", headers }
+    );
+    if (response.ok) {
+      const data = (await response.json().catch(() => null)) as OfferingsResponse | null;
+      if (data?.success && Array.isArray(data.offerings)) {
+        serverOfferings = data.offerings;
       }
     }
+  } catch (err) {
+    console.warn("Customer offerings fetch failed:", err);
   }
 
   // Merge server offerings with locally persisted offerings
@@ -187,10 +155,7 @@ export async function createCustomerOffering(input: {
   endDate?: string;
 }): Promise<CustomerOfferingRecord> {
   const headers = await authHeaders();
-
-  const url = isLocalhost()
-    ? "/api/customer-offerings"
-    : `${PRODUCTION_DASHBOARD_BASE}/customer-offerings`;
+  const url = "/api/customer-offerings";
 
   let createdOffering: CustomerOfferingRecord | null = null;
 
@@ -211,11 +176,8 @@ export async function createCustomerOffering(input: {
     if (response.ok && data?.success && data.offering) {
       createdOffering = data.offering;
     }
-    if (!isLocalhost() && (!response.ok || !data?.success)) {
-      throw new Error(data?.error || `Failed to create offering (status ${response.status})`);
-    }
   } catch (err) {
-    if (!isLocalhost()) throw err;
+    console.warn("POST /api/customer-offerings failed:", err);
   }
 
   // Fallback offering record if backend is in maintenance/offline

@@ -174,28 +174,11 @@ export async function getCustomerCredentials(
 
   const headers = await authHeaders();
 
-  if (isLocalhost()) {
-    try {
-      const response = await fetch(
-        `/api/credentials?customerId=${encodeURIComponent(customerId)}`,
-        { method: "GET", headers }
-      );
-      if (response.ok) {
-        const data = (await response.json().catch(() => null)) as CredentialsResponse | null;
-        if (data?.success && data.credentials) {
-          return data.credentials;
-        }
-      }
-    } catch (err) {
-      console.warn("Local credentials fetch failed (database offline), using fallback credentials:", err);
-    }
-    return buildFallbackCredentials(customerId, customerName);
-  }
-
-  // Production Strategy 1: Path-based on customeranalyticsdashaboard/credentials
   try {
-    const dashboardUrl = `${PRODUCTION_DASHBOARD_BASE}/credentials?customerId=${encodeURIComponent(customerId)}`;
-    const response = await fetch(dashboardUrl, { method: "GET", headers });
+    const response = await fetch(
+      `/api/credentials?customerId=${encodeURIComponent(customerId)}`,
+      { method: "GET", headers }
+    );
     if (response.ok) {
       const data = (await response.json().catch(() => null)) as CredentialsResponse | null;
       if (data?.success && data.credentials) {
@@ -203,22 +186,7 @@ export async function getCustomerCredentials(
       }
     }
   } catch (err) {
-    console.warn("Direct fetch from customeranalyticsdashaboard/credentials failed, attempting action param fallback:", err);
+    console.warn("Credentials fetch failed (database offline), using fallback credentials:", err);
   }
-
-  // Production Strategy 2: Action param on customeranalyticsdashaboard?action=credentials
-  try {
-    const actionUrl = `${PRODUCTION_DASHBOARD_BASE}?action=credentials&customerId=${encodeURIComponent(customerId)}`;
-    const response = await fetch(actionUrl, { method: "GET", headers });
-    if (response.ok) {
-      const data = (await response.json().catch(() => null)) as CredentialsResponse | null;
-      if (data?.success && data.credentials) {
-        return data.credentials;
-      }
-    }
-  } catch (err) {
-    console.warn("Fetch from customeranalyticsdashaboard?action=credentials failed:", err);
-  }
-
   return buildFallbackCredentials(customerId, customerName);
 }

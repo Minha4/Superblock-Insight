@@ -124,8 +124,79 @@ export async function createTeamMemberHandler(
 
 
 
+    // Dispatch real invitation email via AWS Cognito User Pool
+    const cognitoClientId =
+      process.env.VITE_AWS_USER_POOLS_WEB_CLIENT_ID ||
+      process.env.NEXT_PUBLIC_AWS_USER_POOLS_WEB_CLIENT_ID ||
+      "4t46u2ot1h9b9d5no9qsnt2fgj";
+    const cognitoRegion =
+      process.env.AWS_REGION ||
+      process.env.VITE_AWS_REGION ||
+      "ap-south-1";
+    const cognitoUsername = `team_${Date.now()}_${crypto.randomBytes(3).toString("hex")}`;
+    const tempPassword = `Sb!${crypto.randomBytes(4).toString("hex").toUpperCase()}#${Date.now()}a`;
+
+    let cognitoSub: string | null = null;
+    let codeDeliveryDetails: any = null;
+
+    try {
+      const cognitoResponse = await fetch(
+        `https://cognito-idp.${cognitoRegion}.amazonaws.com/`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-amz-json-1.1",
+            "X-Amz-Target": "AWSCognitoIdentityProviderService.SignUp",
+          },
+          body: JSON.stringify({
+            ClientId: cognitoClientId,
+            Username: cognitoUsername,
+            Password: tempPassword,
+            UserAttributes: [
+              { Name: "email", Value: email },
+              { Name: "name", Value: name },
+            ],
+          }),
+        }
+      );
+
+      const cognitoData = (await cognitoResponse.json()) as any;
+
+      if (!cognitoResponse.ok) {
+        if (cognitoData?.__type === "UsernameExistsException") {
+          console.warn(`Cognito user already registered with email ${email}`);
+        } else {
+          console.error("Cognito SignUp error:", cognitoData);
+          return {
+            statusCode: cognitoResponse.status || 400,
+            headers: CORS_HEADERS,
+            body: JSON.stringify({
+              success: false,
+              error:
+                cognitoData?.message ||
+                "Failed to dispatch invitation through authentication provider",
+            } as CreateTeamMemberResponse),
+          };
+        }
+      } else {
+        cognitoSub = cognitoData?.UserSub || null;
+        codeDeliveryDetails = cognitoData?.CodeDeliveryDetails || null;
+      }
+    } catch (cognitoErr: any) {
+      console.error("Error communicating with Cognito IDP service:", cognitoErr);
+      return {
+        statusCode: 502,
+        headers: CORS_HEADERS,
+        body: JSON.stringify({
+          success: false,
+          error: `Authentication provider unreachable: ${cognitoErr?.message || "Connection failed"}`,
+        } as CreateTeamMemberResponse),
+      };
+    }
+
     const randStr = crypto.randomBytes(3).toString("hex");
     const teamUserId = (
+      cognitoSub ||
       payload.teamUserId ||
       payload.team_user_id ||
       (payload as any).id ||
@@ -150,8 +221,14 @@ export async function createTeamMemberHandler(
     `;
 
     const result = await query<TeamMemberRecord>(insertSql, [
-      teamUserId, orgUserId, orgUserName, name, email,
-      avatarUrl, role, passwordHash
+      teamUserId,
+      orgUserId,
+      orgUserName,
+      name,
+      email,
+      avatarUrl,
+      role,
+      passwordHash,
     ]);
 
     return {
@@ -160,6 +237,7 @@ export async function createTeamMemberHandler(
       body: JSON.stringify({
         success: true,
         teamMember: result.rows[0],
+        deliveryDetails: codeDeliveryDetails,
       } as CreateTeamMemberResponse),
     };
   } catch (error: any) {
