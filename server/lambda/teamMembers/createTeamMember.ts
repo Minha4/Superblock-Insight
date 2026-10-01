@@ -38,6 +38,44 @@ function normalizeRole(roleInput?: string): "Admin" | "Manager" | "Agent" | "Mem
   return "Member";
 }
 
+// Production Cognito configuration for Superblock Insight
+export const COGNITO_PROD_CONFIG = {
+  region: "ap-south-1",
+  userPoolId: "ap-south-1_zvqUmSP2y",
+  clientId: "6hrdibr3fdis15rb72qg2erssn",
+  staleClientIds: new Set(["4t46u2ot1h9b9d5no9qsnt2fgj"]),
+  staleUserPoolIds: new Set(["ap-south-1_O2viAa5cM"]),
+};
+
+export function resolveCognitoClientId(): string {
+  const envCandidates = [
+    process.env.COGNITO_CLIENT_ID,
+    process.env.VITE_AWS_USER_POOLS_WEB_CLIENT_ID,
+    process.env.NEXT_PUBLIC_AWS_USER_POOLS_WEB_CLIENT_ID,
+    process.env.AWS_USER_POOLS_WEB_CLIENT_ID,
+  ];
+
+  for (const candidate of envCandidates) {
+    if (candidate && typeof candidate === "string") {
+      const trimmed = candidate.trim();
+      if (trimmed && !COGNITO_PROD_CONFIG.staleClientIds.has(trimmed)) {
+        return trimmed;
+      }
+    }
+  }
+
+  return COGNITO_PROD_CONFIG.clientId;
+}
+
+export function resolveCognitoRegion(): string {
+  return (
+    process.env.AWS_REGION ||
+    process.env.VITE_AWS_REGION ||
+    process.env.NEXT_PUBLIC_AWS_REGION ||
+    COGNITO_PROD_CONFIG.region
+  );
+}
+
 export async function createTeamMemberHandler(
   event: APIGatewayProxyEvent
 ): Promise<APIGatewayProxyResult> {
@@ -125,14 +163,8 @@ export async function createTeamMemberHandler(
 
 
     // Dispatch real invitation email via AWS Cognito User Pool
-    const cognitoClientId =
-      process.env.VITE_AWS_USER_POOLS_WEB_CLIENT_ID ||
-      process.env.NEXT_PUBLIC_AWS_USER_POOLS_WEB_CLIENT_ID ||
-      "6hrdibr3fdis15rb72qg2erssn";
-    const cognitoRegion =
-      process.env.AWS_REGION ||
-      process.env.VITE_AWS_REGION ||
-      "ap-south-1";
+    const cognitoClientId = resolveCognitoClientId();
+    const cognitoRegion = resolveCognitoRegion();
     const cognitoUsername = `team_${Date.now()}_${crypto.randomBytes(3).toString("hex")}`;
     const tempPassword = `Sb!${crypto.randomBytes(4).toString("hex").toUpperCase()}#${Date.now()}a`;
 
@@ -140,6 +172,7 @@ export async function createTeamMemberHandler(
     let codeDeliveryDetails: any = null;
 
     try {
+      console.log(`[Team Invite] Dispatching Cognito SignUp to client ${cognitoClientId} in ${cognitoRegion} for ${email}`);
       const cognitoResponse = await fetch(
         `https://cognito-idp.${cognitoRegion}.amazonaws.com/`,
         {
@@ -163,7 +196,10 @@ export async function createTeamMemberHandler(
       const cognitoData = (await cognitoResponse.json()) as any;
 
       if (!cognitoResponse.ok) {
-        if (cognitoData?.__type === "UsernameExistsException") {
+        if (
+          cognitoData?.__type === "UsernameExistsException" ||
+          cognitoData?.__type === "AliasExistsException"
+        ) {
           console.warn(`Cognito user already registered with email ${email}`);
         } else {
           console.error("Cognito SignUp error:", cognitoData);
@@ -181,6 +217,9 @@ export async function createTeamMemberHandler(
       } else {
         cognitoSub = cognitoData?.UserSub || null;
         codeDeliveryDetails = cognitoData?.CodeDeliveryDetails || null;
+        console.log(
+          `[Team Invite] Cognito invitation dispatched successfully for ${email}. Sub: ${cognitoSub}, Destination: ${codeDeliveryDetails?.Destination}`
+        );
       }
     } catch (cognitoErr: any) {
       console.error("Error communicating with Cognito IDP service:", cognitoErr);
