@@ -68,8 +68,10 @@ export function resolveCognitoClientId(): string {
 }
 
 export function resolveCognitoRegion(): string {
+  // NOTE: On Vercel, the ambient process.env.AWS_REGION is automatically injected by AWS Lambda to the serverless container region (e.g. us-east-1).
+  // Superblock Cognito User Pool is in ap-south-1. Prefer explicit Cognito region or fallback to ap-south-1.
   return (
-    process.env.AWS_REGION ||
+    process.env.COGNITO_REGION ||
     process.env.VITE_AWS_REGION ||
     process.env.NEXT_PUBLIC_AWS_REGION ||
     COGNITO_PROD_CONFIG.region
