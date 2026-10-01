@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { query } from "../db";
+import { toIsoDate } from "../invoices/createInvoice";
 import type {
   APIGatewayProxyEvent,
   APIGatewayProxyResult,
@@ -145,8 +146,8 @@ export async function createSubscriptionHandler(
     const status = ["active", "pending", "cancelled", "trial", "past due", "renewal due"].includes(rawStatus)
       ? rawStatus
       : "active";
-    const startDate = payload.startDate || payload.start_date || new Date().toISOString().split("T")[0];
-    const endDate = payload.endDate || payload.end_date || payload.renewalDate || null;
+    const startDate = toIsoDate(payload.startDate || payload.start_date) || new Date().toISOString().split("T")[0];
+    const endDate = toIsoDate(payload.endDate || payload.end_date || payload.renewalDate);
     const amount = typeof payload.amount === "number" ? payload.amount : (typeof payload.mrr === "number" ? payload.mrr : null);
     const currency = payload.currency || "INR";
     const billingInterval = normalizeBillingInterval(

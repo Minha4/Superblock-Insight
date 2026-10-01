@@ -1,4 +1,5 @@
 import { query } from "../db";
+import { toIsoDate } from "./createInvoice";
 import type {
   APIGatewayProxyEvent,
   APIGatewayProxyResult,
@@ -99,7 +100,7 @@ export async function updateInvoiceHandler(
     const rawPaid = payload.paidDate !== undefined ? payload.paidDate : (payload.paid_date !== undefined ? payload.paid_date : payload.paymentDate);
     if (rawPaid !== undefined) {
       updates.push(`paid_date = $${idx++}`);
-      values.push(rawPaid ? String(rawPaid).slice(0, 10) : null);
+      values.push(toIsoDate(rawPaid));
     }
 
     if (payload.amount !== undefined) {
@@ -126,13 +127,13 @@ export async function updateInvoiceHandler(
     const issueDate = payload.issueDate || payload.issue_date;
     if (issueDate !== undefined) {
       updates.push(`issue_date = $${idx++}`);
-      values.push(issueDate ? String(issueDate).slice(0, 10) : null);
+      values.push(toIsoDate(issueDate));
     }
 
     const dueDate = payload.dueDate || payload.due_date;
     if (dueDate !== undefined) {
       updates.push(`due_date = $${idx++}`);
-      values.push(dueDate ? String(dueDate).slice(0, 10) : null);
+      values.push(toIsoDate(dueDate));
     }
 
     const desc = payload.description || payload.product;

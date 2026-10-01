@@ -80,6 +80,7 @@ export { updateSubscriptionHandler } from "./subscriptions/updateSubscription";
 export { deleteSubscriptionHandler } from "./subscriptions/deleteSubscription";
 export { getCustomerOfferingsHandler } from "./customerOfferings/getCustomerOfferings";
 export { createCustomerOfferingHandler } from "./customerOfferings/createCustomerOffering";
+export { deleteCustomerOfferingHandler } from "./customerOfferings/deleteCustomerOffering";
 export { getInvoicesHandler } from "./invoices/getInvoices";
 export { createInvoiceHandler } from "./invoices/createInvoice";
 export { updateInvoiceHandler } from "./invoices/updateInvoice";

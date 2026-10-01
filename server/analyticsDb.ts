@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import path from "node:path";
 import fs from "node:fs";
+import { fileURLToPath } from "node:url";
 
 export interface ActivityRecord {
   id: string;
@@ -149,11 +150,18 @@ function getPythonPath(): string {
 }
 
 function getScriptPath(): string {
+  const baseDir =
+    typeof import.meta !== "undefined" && import.meta.url
+      ? path.dirname(fileURLToPath(import.meta.url))
+      : typeof __dirname !== "undefined"
+      ? __dirname
+      : process.cwd();
+
   const possiblePaths = [
     path.resolve(process.cwd(), "server", "queryAnalyticsDb.py"),
-    path.resolve(import.meta.dirname, "queryAnalyticsDb.py"),
-    path.resolve(import.meta.dirname, "..", "server", "queryAnalyticsDb.py"),
-    path.resolve(import.meta.dirname, "server", "queryAnalyticsDb.py"),
+    path.resolve(baseDir, "queryAnalyticsDb.py"),
+    path.resolve(baseDir, "..", "server", "queryAnalyticsDb.py"),
+    path.resolve(baseDir, "server", "queryAnalyticsDb.py"),
   ];
 
   for (const p of possiblePaths) {

@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { query } from "../db";
+import { toIsoDate } from "../invoices/createInvoice";
 import type {
   APIGatewayProxyEvent,
   APIGatewayProxyResult,
@@ -103,8 +104,8 @@ export async function createCustomerOfferingHandler(
     }
 
     const status = payload.status || "active";
-    const startDate = payload.startDate || payload.start_date || null;
-    const endDate = payload.endDate || payload.end_date || null;
+    const startDate = toIsoDate(payload.startDate || payload.start_date);
+    const endDate = toIsoDate(payload.endDate || payload.end_date);
 
     const insertSql = `
       INSERT INTO public.customer_offerings (

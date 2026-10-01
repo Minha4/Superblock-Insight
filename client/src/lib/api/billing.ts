@@ -132,7 +132,7 @@ export function saveLocalInvoice(customerId: string, invoice: InvoiceRecord): vo
 }
 
 /**
- * Fetches invoices for a customer from /api/invoices.
+ * Fetches invoices for a customer from /api/invoices directly from Supabase.
  */
 export async function getCustomerInvoices(
   customerId: string
@@ -142,8 +142,6 @@ export async function getCustomerInvoices(
   const headers = await authHeaders();
   const encoded = encodeURIComponent(customerId);
 
-  let serverInvoices: InvoiceRecord[] = [];
-
   try {
     const response = await fetch(`/api/invoices?customerId=${encoded}`, {
       method: "GET",
@@ -152,21 +150,14 @@ export async function getCustomerInvoices(
     if (response.ok) {
       const data = (await response.json().catch(() => null)) as InvoicesResponse | null;
       if (data?.success && Array.isArray(data.invoices)) {
-        serverInvoices = data.invoices;
+        return data.invoices;
       }
     }
   } catch (err) {
-    console.warn("Invoices fetch failed (database offline), using fallback:", err);
+    console.error("Error fetching customer invoices from API:", err);
   }
 
-  const local = getLocalInvoices(customerId);
-  const serverIds = new Set(
-    serverInvoices.flatMap((i) => [i.id, (i as any).invoice_number, (i as any).invoiceNumber].filter(Boolean))
-  );
-  return [
-    ...local.filter((l) => !serverIds.has(l.id) && !serverIds.has((l as any).invoice_number)),
-    ...serverInvoices,
-  ];
+  return [];
 }
 
 /**
@@ -238,37 +229,24 @@ export async function createCustomerInvoice(input: {
     ...input,
   };
 
-  const fallbackRecord: InvoiceRecord = {
-    id: input.invoiceNumber || `local-inv-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-    customer_id: input.customerId,
-    invoice_number: input.invoiceNumber || `INV-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`,
-    status: input.status || "Paid",
-    amount: input.amount || 0,
-    currency: input.currency || "INR",
-    issue_date: input.issueDate || new Date().toISOString(),
-    due_date: input.dueDate || new Date(Date.now() + 14 * 86400000).toISOString(),
-    paid_date: input.status === "Paid" ? new Date().toISOString() : null,
-    description: input.description || null,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  };
+  const response = await fetch("/api/invoices", {
+    method: "POST",
+    headers,
+    body: JSON.stringify(payload),
+  });
 
-  try {
-    const response = await fetch("/api/invoices", {
-      method: "POST",
-      headers,
-      body: JSON.stringify(payload),
-    });
-    const data = await response.json().catch(() => null);
-    if (response.ok && data?.success && data.invoice) {
-      saveLocalInvoice(input.customerId, data.invoice);
-      return data.invoice;
+  const data = await response.json().catch(() => null);
+  if (response.ok && data?.success && data.invoice) {
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(
+        new CustomEvent("customer-invoice-created", {
+          detail: { customerId: input.customerId, invoice: data.invoice },
+        })
+      );
     }
-  } catch (err) {
-    console.warn("Create invoice failed, persisting locally:", err);
+    return data.invoice;
   }
 
-  saveLocalInvoice(input.customerId, fallbackRecord);
-  return fallbackRecord;
+  throw new Error(data?.error || `Failed to create invoice (Status ${response.status})`);
 }
 

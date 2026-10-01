@@ -124,17 +124,15 @@ export async function getCustomerMeetings(
     );
     if (response.ok) {
       const data = (await response.json().catch(() => null)) as MeetingsResponse | null;
-      if (data?.success && Array.isArray(data.meetings)) {
-        serverMeetings = data.meetings;
+      if (Array.isArray(data?.meetings)) {
+        return data.meetings;
       }
     }
   } catch (err) {
-    console.warn("Meetings fetch failed:", err);
+    console.error("Error fetching customer meetings from API:", err);
   }
 
-  const local = getLocalMeetings(customerId);
-  const serverIds = new Set(serverMeetings.map((m) => m.id));
-  return [...local.filter((l) => !serverIds.has(l.id)), ...serverMeetings];
+  return [];
 }
 
 export async function createCustomerMeeting(input: {
@@ -168,36 +166,24 @@ export async function createCustomerMeeting(input: {
     createdBy: input.createdBy || null,
   };
 
-  try {
-    const response = await fetch("/api/meetings", {
-      method: "POST",
-      headers,
-      body: JSON.stringify(payload),
-    });
-    const data = (await response.json().catch(() => null)) as CreateMeetingResponse | null;
-    if (response.ok && data?.success && data.meeting) {
-      saveLocalMeeting(input.customerId, data.meeting);
-      return data.meeting;
+  const response = await fetch("/api/meetings", {
+    method: "POST",
+    headers,
+    body: JSON.stringify(payload),
+  });
+  const data = (await response.json().catch(() => null)) as CreateMeetingResponse | null;
+  if (response.ok && data?.success && data.meeting) {
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(
+        new CustomEvent("customer-meeting-created", {
+          detail: { customerId: input.customerId, meeting: data.meeting },
+        })
+      );
     }
-  } catch (err) {
-    console.warn("POST /api/meetings failed:", err);
+    return data.meeting;
   }
 
-  const fallbackRecord: MeetingRecord = {
-    id: `meeting-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-    customer_id: input.customerId,
-    title: input.title.trim(),
-    description: input.description?.trim() || null,
-    meeting_date: input.meetingDate || new Date().toISOString(),
-    duration_minutes: input.durationMinutes ?? 30,
-    status: input.status || "scheduled",
-    meeting_url: input.meetingUrl || null,
-    created_by: input.createdBy || "Admin User",
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  };
-  saveLocalMeeting(input.customerId, fallbackRecord);
-  return fallbackRecord;
+  throw new Error(data?.error || `Failed to create meeting (Status ${response.status})`);
 }
 
 export async function updateCustomerMeeting(
@@ -222,33 +208,17 @@ export async function updateCustomerMeeting(
     ...input,
   };
 
-  try {
-    const res = await fetch(`/api/meetings/${encodeURIComponent(meetingId)}`, {
-      method: "PUT",
-      headers,
-      body: JSON.stringify(payload),
-    });
-    const data = await res.json().catch(() => null);
-    if (res.ok && data?.success && data.meeting) {
-      return data.meeting;
-    }
-  } catch (err) {
-    console.warn("PUT /api/meetings failed:", err);
+  const res = await fetch(`/api/meetings/${encodeURIComponent(meetingId)}`, {
+    method: "PUT",
+    headers,
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json().catch(() => null);
+  if (res.ok && data?.success && data.meeting) {
+    return data.meeting;
   }
 
-  return {
-    id: meetingId,
-    customer_id: "",
-    title: input.title || "Meeting",
-    description: input.description || null,
-    meeting_date: input.meetingDate || null,
-    duration_minutes: input.durationMinutes ?? null,
-    status: input.status || "scheduled",
-    meeting_url: input.meetingUrl || null,
-    created_by: "Admin User",
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  };
+  throw new Error(data?.error || `Failed to update meeting (Status ${res.status})`);
 }
 
 export async function deleteCustomerMeeting(meetingId: string): Promise<boolean> {
@@ -258,41 +228,15 @@ export async function deleteCustomerMeeting(meetingId: string): Promise<boolean>
 
   const headers = await authHeaders();
 
-  try {
-    const res = await fetch(`/api/meetings/${encodeURIComponent(meetingId)}`, {
-      method: "DELETE",
-      headers,
-    });
-    const data = await res.json().catch(() => null);
-    if (res.ok && data?.success) {
-      // success
-    }
-  } catch (err) {
-    console.warn("DELETE /api/meetings failed:", err);
+  const res = await fetch(`/api/meetings/${encodeURIComponent(meetingId)}`, {
+    method: "DELETE",
+    headers,
+  });
+  const data = await res.json().catch(() => null);
+  if (res.ok && data?.success) {
+    return true;
   }
 
-  if (typeof window !== "undefined") {
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key?.startsWith("sb_meetings_")) {
-        const raw = localStorage.getItem(key);
-        if (raw && raw.includes(meetingId)) {
-          try {
-            const list = JSON.parse(raw);
-            const filtered = list.filter((m: any) => m.id !== meetingId);
-            localStorage.setItem(key, JSON.stringify(filtered));
-            const custId = key.replace("sb_meetings_", "");
-            window.dispatchEvent(
-              new CustomEvent("customer-meeting-created", {
-                detail: { customerId: custId, meetingId },
-              })
-            );
-          } catch {}
-        }
-      }
-    }
-  }
-
-  return true;
+  throw new Error(data?.error || `Failed to delete meeting (Status ${res.status})`);
 }
 

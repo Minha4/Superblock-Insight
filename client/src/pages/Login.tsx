@@ -37,7 +37,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { KeyRound } from "lucide-react";
-import { initAmplify } from "@/lib/amplify";
+import { initAmplify, configureAmplifyPool, PRIMARY_POOL, SECONDARY_POOL } from "@/lib/amplify";
 import { useAuth } from "@/contexts/AuthContext";
 
 // Ensure Amplify is initialized
@@ -196,6 +196,7 @@ export default function Login() {
       console.log("🔵 Attempting Cognito sign in for:", trimmedUsername);
       let user;
       try {
+        configureAmplifyPool(PRIMARY_POOL);
         user = await signIn({
           username: trimmedUsername,
           password,
@@ -210,6 +211,16 @@ export default function Login() {
           (signInErr instanceof Error &&
             signInErr.message.includes("already a signed in user"));
 
+        const isNotFoundOrNotAuth =
+          (signInErr &&
+            typeof signInErr === "object" &&
+            "name" in signInErr &&
+            ((signInErr as any).name === "UserNotFoundException" ||
+              (signInErr as any).name === "NotAuthorizedException")) ||
+          (signInErr instanceof Error &&
+            (signInErr.message.includes("User does not exist") ||
+              signInErr.message.includes("Incorrect username or password")));
+
         if (isAlreadyAuth) {
           console.log("User already authenticated, refreshing session...");
           try {
@@ -220,6 +231,18 @@ export default function Login() {
             });
           } catch {
             // Already signed in, proceed to retrieve user data
+          }
+        } else if (isNotFoundOrNotAuth) {
+          console.log("Attempting secondary pool sign-in...");
+          try {
+            configureAmplifyPool(SECONDARY_POOL);
+            user = await signIn({
+              username: trimmedUsername,
+              password,
+            });
+          } catch (secondErr: unknown) {
+            configureAmplifyPool(PRIMARY_POOL);
+            throw signInErr;
           }
         } else {
           throw signInErr;
@@ -554,15 +577,6 @@ export default function Login() {
                   <Button
                     type="button"
                     size="sm"
-                    variant="default"
-                    className="h-7 text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-medium"
-                    onClick={() => loginLocally(username || "superblock.pvt@gmail.com")}
-                  >
-                    Quick Sign In as {username ? username.split("@")[0] : "Superblock Admin"}
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
                     variant="outline"
                     className="h-7 text-xs bg-card hover:bg-accent border text-foreground"
                     onClick={handleRequestReset}
@@ -583,24 +597,6 @@ export default function Login() {
               {loading ? <Loader2 className="size-4 animate-spin" /> : <LockKeyhole className="size-4" />}
               {loading ? "Signing in…" : "Sign in securely"}
               {!loading && <ArrowRight className="ml-auto size-4" />}
-            </Button>
-
-            <div className="relative my-4 flex items-center justify-center">
-              <div className="absolute inset-0 flex items-center"><span className="w-full border-t border-border" /></div>
-              <span className="relative bg-card px-2.5 text-[10px] uppercase tracking-wider text-muted-foreground">
-                Or Quick Access
-              </span>
-            </div>
-
-            <Button
-              type="button"
-              variant="outline"
-              className="h-11 w-full text-[13px] bg-card border-dashed hover:bg-accent cursor-pointer"
-              onClick={() => loginLocally(username || "superblock.pvt@gmail.com")}
-              disabled={loading}
-            >
-              <Sparkles className="mr-2 size-4 text-emerald-500" />
-              Sign in as Superblock Admin (Dev Access)
             </Button>
           </form>
 

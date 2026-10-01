@@ -46,6 +46,20 @@ function toDeterministicUuid(str: string): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
 
+export function toIsoDate(d: any): string | null {
+  if (!d) return null;
+  const s = String(d).trim();
+  if (!s || s === "—" || s === "-") return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  try {
+    const parsed = new Date(s);
+    if (!isNaN(parsed.getTime())) {
+      return parsed.toISOString().split("T")[0];
+    }
+  } catch {}
+  return null;
+}
+
 /**
  * Resolves a customer identifier into a confirmed customer UUID.
  * Returns the UUID directly without querying the legacy customers_details table.
@@ -150,10 +164,12 @@ export async function createInvoiceHandler(
     const currency = (payload.currency || "INR").trim().toUpperCase();
     const status = (payload.status || "Sent").trim();
     const description = (payload.description || (payload as any).product || "Platform & Software Services").trim();
-    const issueDate = payload.issueDate || payload.issue_date || (payload as any).date || new Date().toISOString().split("T")[0];
-    const dueDate = payload.dueDate || payload.due_date || new Date(Date.now() + 14 * 86400000).toISOString().split("T")[0];
+    const rawIssueDate = payload.issueDate || payload.issue_date || (payload as any).date;
+    const issueDate = toIsoDate(rawIssueDate) || new Date().toISOString().split("T")[0];
+    const rawDueDate = payload.dueDate || payload.due_date;
+    const dueDate = toIsoDate(rawDueDate) || new Date(Date.now() + 14 * 86400000).toISOString().split("T")[0];
     const rawPaidDate = payload.paidDate || payload.paid_date || (payload as any).paymentDate;
-    const paidDate = rawPaidDate ? String(rawPaidDate).slice(0, 10) : (status.toLowerCase() === "paid" ? String(issueDate).slice(0, 10) : null);
+    const paidDate = toIsoDate(rawPaidDate) || (status.toLowerCase() === "paid" ? issueDate : null);
 
     const insertSql = `
       INSERT INTO public.invoices (

@@ -1,57 +1,42 @@
 import { Amplify } from "aws-amplify";
 
-function getEnv(viteKey: string, nextKey: string, fallback: string): string {
+// Primary: Official Superblock Production Cognito Pool where superblock.pvt@gmail.com is registered
+export const PRIMARY_POOL = {
+  userPoolId: import.meta.env.VITE_AWS_USER_POOLS_ID || "ap-south-1_zvqUmSP2y",
+  userPoolClientId: import.meta.env.VITE_AWS_USER_POOLS_WEB_CLIENT_ID || "6hrdibr3fdis15rb72qg2erssn",
+};
+
+// Secondary / fallback pool
+export const SECONDARY_POOL = {
+  userPoolId: "ap-south-1_O2viAa5cM",
+  userPoolClientId: "4t46u2ot1h9b9d5no9qsnt2fgj",
+};
+
+let currentConfig = { ...PRIMARY_POOL };
+
+export function configureAmplifyPool(pool: { userPoolId: string; userPoolClientId: string }) {
   try {
-    if (typeof import.meta !== "undefined" && import.meta.env) {
-      const v = (import.meta.env as Record<string, string | undefined>)[viteKey] ||
-                (import.meta.env as Record<string, string | undefined>)[nextKey];
-      if (v) return v;
-    }
-  } catch {}
-
-  try {
-    if (typeof process !== "undefined" && process.env) {
-      const p = process.env[viteKey] || process.env[nextKey];
-      if (p) return p;
-    }
-  } catch {}
-
-  return fallback;
-}
-
-const userPoolId = getEnv(
-  "VITE_AWS_USER_POOLS_ID",
-  "NEXT_PUBLIC_AWS_USER_POOLS_ID",
-  "ap-south-1_O2viAa5cM"
-);
-
-const userPoolClientId = getEnv(
-  "VITE_AWS_USER_POOLS_WEB_CLIENT_ID",
-  "NEXT_PUBLIC_AWS_USER_POOLS_WEB_CLIENT_ID",
-  "4t46u2ot1h9b9d5no9qsnt2fgj"
-);
-
-let isConfigured = false;
-
-export function initAmplify() {
-  if (isConfigured) return;
-
-  try {
-    if (userPoolId && userPoolClientId) {
-      Amplify.configure({
-        Auth: {
-          Cognito: {
-            userPoolId,
-            userPoolClientId,
+    Amplify.configure({
+      Auth: {
+        Cognito: {
+          userPoolId: pool.userPoolId,
+          userPoolClientId: pool.userPoolClientId,
+          loginWith: {
+            email: true,
+            username: true,
           },
         },
-      });
-      isConfigured = true;
-      console.log("✅ AWS Amplify configured successfully with Cognito User Pool");
-    }
+      },
+    });
+    currentConfig = { ...pool };
+    console.log(`✅ AWS Amplify configured with User Pool: ${pool.userPoolId}`);
   } catch (err) {
-    console.warn("Amplify configuration initialization warning:", err);
+    console.warn("Amplify configuration warning:", err);
   }
+}
+
+export function initAmplify() {
+  configureAmplifyPool(currentConfig);
 }
 
 // Auto-initialize on module load

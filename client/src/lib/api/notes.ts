@@ -152,7 +152,6 @@ export async function getCustomerNotes(
   if (!customerId) return [];
 
   const headers = await getAuthHeaders();
-  let serverNotes: NoteRecord[] = [];
 
   try {
     const res = await fetch(
@@ -162,16 +161,14 @@ export async function getCustomerNotes(
     if (res.ok) {
       const data = (await res.json().catch(() => null)) as GetNotesResponse | null;
       if (Array.isArray(data?.notes)) {
-        serverNotes = data.notes;
+        return data.notes;
       }
     }
   } catch (err) {
-    console.warn("Notes fetch failed:", err);
+    console.error("Error fetching customer notes from API:", err);
   }
 
-  const local = getLocalNotes(customerId);
-  const serverIds = new Set(serverNotes.map((n) => n.id));
-  return [...local.filter((l) => !serverIds.has(l.id)), ...serverNotes];
+  return [];
 }
 
 /**
@@ -196,33 +193,24 @@ export async function createCustomerNote(input: {
     createdBy: input.createdBy || null,
   };
 
-  try {
-    const res = await fetch("/api/notes", {
-      method: "POST",
-      headers,
-      body: JSON.stringify(payload),
-    });
-    const data = (await res.json().catch(() => null)) as MutateNoteResponse | null;
-    if (res.ok && data?.success && data?.note) {
-      saveLocalNote(input.customerId, data.note);
-      return data.note;
+  const res = await fetch("/api/notes", {
+    method: "POST",
+    headers,
+    body: JSON.stringify(payload),
+  });
+  const data = (await res.json().catch(() => null)) as MutateNoteResponse | null;
+  if (res.ok && data?.success && data?.note) {
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(
+        new CustomEvent("customer-note-created", {
+          detail: { customerId: input.customerId, note: data.note },
+        })
+      );
     }
-  } catch (err: any) {
-    console.warn("POST /api/notes failed:", err?.message || err);
+    return data.note;
   }
 
-  // Fallback: persist directly to localStorage so it survives reload
-  const localNote: NoteRecord = {
-    id: `note-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-    customer_id: input.customerId,
-    title: input.title?.trim() || "Customer Note",
-    content: input.content.trim(),
-    created_by: input.createdBy || "Admin User",
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  };
-  saveLocalNote(input.customerId, localNote);
-  return localNote;
+  throw new Error(data?.error || `Failed to create note (Status ${res.status})`);
 }
 
 /**
@@ -242,44 +230,17 @@ export async function updateCustomerNote(
     content: input.content?.trim() || "",
   };
 
-  try {
-    const res = await fetch(`/api/notes/${encodeURIComponent(noteId)}`, {
-      method: "PUT",
-      headers,
-      body: JSON.stringify(payload),
-    });
-    const data = (await res.json().catch(() => null)) as MutateNoteResponse | null;
-    if (res.ok && data?.success && data?.note) {
-      return data.note;
-    }
-  } catch (err) {
-    console.warn("PUT /api/notes failed:", err);
+  const res = await fetch(`/api/notes/${encodeURIComponent(noteId)}`, {
+    method: "PUT",
+    headers,
+    body: JSON.stringify(payload),
+  });
+  const data = (await res.json().catch(() => null)) as MutateNoteResponse | null;
+  if (res.ok && data?.success && data?.note) {
+    return data.note;
   }
 
-  // Fallback: update any matching note in localStorage
-  if (typeof window !== "undefined") {
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key?.startsWith("sb_notes_")) {
-        const custId = key.replace("sb_notes_", "");
-        const updated = updateLocalNote(custId, noteId, {
-          title: input.title,
-          content: input.content,
-        });
-        if (updated) return updated;
-      }
-    }
-  }
-
-  return {
-    id: noteId,
-    customer_id: "",
-    title: input.title?.trim() || null,
-    content: input.content?.trim() || "",
-    created_by: "Admin User",
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  };
+  throw new Error(data?.error || `Failed to update note (Status ${res.status})`);
 }
 
 /**
@@ -290,41 +251,14 @@ export async function deleteCustomerNote(noteId: string): Promise<boolean> {
 
   const headers = await getAuthHeaders();
 
-  try {
-    const res = await fetch(`/api/notes/${encodeURIComponent(noteId)}`, {
-      method: "DELETE",
-      headers,
-    });
-    const data = (await res.json().catch(() => null)) as MutateNoteResponse | null;
-    if (res.ok && data?.success) {
-      // success
-    }
-  } catch (err) {
-    console.warn("DELETE /api/notes failed:", err);
+  const res = await fetch(`/api/notes/${encodeURIComponent(noteId)}`, {
+    method: "DELETE",
+    headers,
+  });
+  const data = (await res.json().catch(() => null)) as MutateNoteResponse | null;
+  if (res.ok && data?.success) {
+    return true;
   }
 
-  // Also remove from any customer's localStorage
-  if (typeof window !== "undefined") {
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key?.startsWith("sb_notes_")) {
-        const raw = localStorage.getItem(key);
-        if (raw && raw.includes(noteId)) {
-          try {
-            const list = JSON.parse(raw);
-            const filtered = list.filter((n: any) => n.id !== noteId);
-            localStorage.setItem(key, JSON.stringify(filtered));
-            const custId = key.replace("sb_notes_", "");
-            window.dispatchEvent(
-              new CustomEvent("customer-note-created", {
-                detail: { customerId: custId, noteId },
-              })
-            );
-          } catch {}
-        }
-      }
-    }
-  }
-
-  return true;
+  throw new Error(data?.error || `Failed to delete note (Status ${res.status})`);
 }

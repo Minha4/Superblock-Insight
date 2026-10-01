@@ -1,4 +1,5 @@
 import { query } from "../db";
+import { toIsoDate } from "../invoices/createInvoice";
 import type {
   APIGatewayProxyEvent,
   APIGatewayProxyResult,
@@ -87,11 +88,11 @@ export async function updateSubscriptionHandler(
     }
     if (payload.startDate !== undefined || payload.start_date !== undefined) {
       setClauses.push(`start_date = $${idx++}`);
-      values.push(payload.startDate ?? payload.start_date);
+      values.push(toIsoDate(payload.startDate ?? payload.start_date));
     }
     if (payload.endDate !== undefined || payload.end_date !== undefined || payload.renewalDate !== undefined) {
       setClauses.push(`end_date = $${idx++}`);
-      values.push(payload.endDate ?? payload.end_date ?? payload.renewalDate);
+      values.push(toIsoDate(payload.endDate ?? payload.end_date ?? payload.renewalDate));
     }
     if (payload.amount !== undefined || payload.mrr !== undefined) {
       setClauses.push(`amount = $${idx++}`);

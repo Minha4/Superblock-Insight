@@ -124,8 +124,6 @@ export async function getCustomerOfferings(
 
   const headers = await authHeaders();
 
-  let serverOfferings: CustomerOfferingRecord[] = [];
-
   try {
     const response = await fetch(
       `/api/customer-offerings?customerId=${encodeURIComponent(customerId)}`,
@@ -134,17 +132,14 @@ export async function getCustomerOfferings(
     if (response.ok) {
       const data = (await response.json().catch(() => null)) as OfferingsResponse | null;
       if (data?.success && Array.isArray(data.offerings)) {
-        serverOfferings = data.offerings;
+        return data.offerings;
       }
     }
   } catch (err) {
-    console.warn("Customer offerings fetch failed:", err);
+    console.error("Customer offerings fetch failed:", err);
   }
 
-  // Merge server offerings with locally persisted offerings
-  const localOfferings = getLocalOfferings(customerId);
-  const serverIds = new Set(serverOfferings.map((o) => o.id));
-  return [...localOfferings.filter((l) => !serverIds.has(l.id)), ...serverOfferings];
+  return [];
 }
 
 export async function createCustomerOffering(input: {
@@ -157,52 +152,50 @@ export async function createCustomerOffering(input: {
   const headers = await authHeaders();
   const url = "/api/customer-offerings";
 
-  let createdOffering: CustomerOfferingRecord | null = null;
+  const response = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      customerId: input.customerId,
+      offeringName: input.offeringName,
+      status: input.status || "Active",
+      startDate: input.startDate || new Date().toISOString(),
+      endDate: input.endDate || null,
+    }),
+  });
 
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        customerId: input.customerId,
-        offeringName: input.offeringName,
-        status: input.status || "Active",
-        startDate: input.startDate || new Date().toISOString(),
-        endDate: input.endDate || null,
-      }),
-    });
-
-    const data = await response.json().catch(() => null);
-    if (response.ok && data?.success && data.offering) {
-      createdOffering = data.offering;
+  const data = await response.json().catch(() => null);
+  if (response.ok && data?.success && data.offering) {
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(
+        new CustomEvent("customer-offering-created", {
+          detail: { customerId: input.customerId, offering: data.offering },
+        })
+      );
     }
-  } catch (err) {
-    console.warn("POST /api/customer-offerings failed:", err);
+    return data.offering;
   }
 
-  // Fallback offering record if backend is in maintenance/offline
-  const record: CustomerOfferingRecord = createdOffering || {
-    id: `offering-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-    customer_id: input.customerId,
-    product_id: null,
-    offering_name: input.offeringName,
-    status: input.status || "Active",
-    start_date: input.startDate || new Date().toISOString(),
-    end_date: input.endDate || null,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  };
+  throw new Error(data?.error || `Failed to create customer offering (Status ${response.status})`);
+}
 
-  // Persist locally so it always survives re-fetches and page reloads
-  saveLocalOffering(input.customerId, record);
-
-  if (typeof window !== "undefined") {
-    window.dispatchEvent(
-      new CustomEvent("customer-offering-created", {
-        detail: { customerId: input.customerId, offering: record },
-      })
-    );
+export async function deleteCustomerOffering(
+  offeringId: string
+): Promise<{ success: boolean; id: string }> {
+  if (!offeringId) {
+    throw new Error("Offering ID is required");
   }
 
-  return record;
+  const headers = await authHeaders();
+  const response = await fetch(`/api/customer-offerings/${encodeURIComponent(offeringId)}`, {
+    method: "DELETE",
+    headers,
+  });
+
+  const data = await response.json().catch(() => null);
+  if (response.ok && data?.success) {
+    return { success: true, id: offeringId };
+  }
+
+  throw new Error(data?.error || `Failed to delete customer offering (Status ${response.status})`);
 }
