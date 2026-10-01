@@ -48,13 +48,34 @@ import { createCustomerOfferingHandler } from "./lambda/customerOfferings/create
 import { deleteCustomerOfferingHandler } from "./lambda/customerOfferings/deleteCustomerOffering";
 import { customerContactsSummary } from "../client/src/data/customerContactsData";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const __filename =
+  typeof import.meta !== "undefined" && import.meta.url
+    ? fileURLToPath(import.meta.url)
+    : "";
+const __dirname =
+  __filename ? path.dirname(__filename) : process.cwd();
 
 export const app = express();
 
 // Parse JSON payloads
 app.use(express.json());
+
+// Normalize URLs so serverless invocations matching both /api/* and /* route cleanly
+app.use((req, _res, next) => {
+  if (req.url && !req.url.startsWith("/api") && !req.url.startsWith("/_")) {
+    req.url = `/api${req.url.startsWith("/") ? "" : "/"}${req.url}`;
+  }
+  next();
+});
+
+// Health check endpoint for Vercel and uptime monitoring
+app.get(["/api/health", "/health"], (_req, res) => {
+  return res.json({
+    status: "ok",
+    timestamp: new Date().toISOString(),
+    env: process.env.NODE_ENV || "development",
+  });
+});
 
   // Session cookie management endpoint
   app.post("/api/set-user-session", (req, res) => {

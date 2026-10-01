@@ -141,7 +141,9 @@ async function getDbCredentials(): Promise<{ username: string; password: string 
       const currentDir =
         typeof __dirname !== "undefined"
           ? __dirname
-          : path.dirname(fileURLToPath(import.meta.url));
+          : typeof import.meta !== "undefined" && import.meta.url
+          ? path.dirname(fileURLToPath(import.meta.url))
+          : process.cwd();
 
       const possibleScriptPaths = [
         path.resolve(process.cwd(), "server", "queryAnalyticsDb.py"),
