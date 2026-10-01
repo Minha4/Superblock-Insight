@@ -248,12 +248,15 @@ export async function updateTeamMember(id: string, updates: Partial<TeamMemberIt
 }
 
 export async function deleteTeamMember(id: string): Promise<boolean> {
-  try {
-    await fetch(`/api/team/${encodeURIComponent(id)}`, {
-      method: "DELETE",
-    });
-  } catch (err) {
-    console.warn("Backend DELETE /api/team failed, removing from local storage:", err);
+  const res = await fetch(`/api/team/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+  });
+
+  const data = await res.json().catch(() => null);
+
+  if (!res.ok || (data && data.success === false)) {
+    throw new Error(data?.error || `Failed to delete team member (${res.status})`);
   }
 
   const existing = loadLocalTeamMembers();

@@ -1221,14 +1221,16 @@ app.post("/api/gateway-login", async (req, res) => {
     }
   });
 
-  app.delete("/api/team/:id", async (req, res) => {
-    const id = req.params.id;
+  const handleDeleteTeamMember = async (req: express.Request, res: express.Response) => {
+    const id = req.params.id || (req.query.id as string) || (req.query.email as string) || req.body?.id || req.body?.email;
     try {
       const result = await deleteTeamMemberHandler({
         httpMethod: "DELETE",
-        path: `/team/${id}`,
-        pathParameters: { id },
+        path: `/team/${id || ""}`,
+        pathParameters: id ? { id } : undefined,
+        queryStringParameters: req.query as Record<string, string | undefined>,
         headers: req.headers as Record<string, string | undefined>,
+        body: typeof req.body === "string" ? req.body : JSON.stringify(req.body || {}),
       });
       let responseData: any;
       try {
@@ -1236,12 +1238,15 @@ app.post("/api/gateway-login", async (req, res) => {
       } catch {
         responseData = { message: result.body };
       }
-      return res.status(result.statusCode).json(responseData);
+      return res.status(result.statusCode || (responseData?.success ? 200 : 400)).json(responseData);
     } catch (error: any) {
-      console.error("DELETE /api/team/:id error:", error);
+      console.error("DELETE /api/team error:", error);
       return res.status(500).json({ success: false, error: error?.message || "Failed to delete team member" });
     }
-  });
+  };
+
+  app.delete("/api/team/:id", handleDeleteTeamMember);
+  app.delete("/api/team", handleDeleteTeamMember);
 
   // Settings endpoints (GET, POST)
   app.get("/api/settings", (_req, res) => {

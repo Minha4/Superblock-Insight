@@ -45,9 +45,28 @@ async function getApp() {
 export default async function handler(req: IncomingMessage, res: ServerResponse) {
   try {
     const app = await getApp();
-    if (req.url && !req.url.startsWith("/api")) {
-      req.url = `/api${req.url.startsWith("/") ? "" : "/"}${req.url}`;
+
+    const matchedPath = req.headers["x-matched-path"] as string | undefined;
+    if (matchedPath && matchedPath.startsWith("/api")) {
+      req.url = matchedPath;
+    } else if (req.url) {
+      try {
+        const parsedUrl = new URL(req.url, "http://localhost");
+        const paramPath = parsedUrl.searchParams.get("__path");
+        if (paramPath) {
+          parsedUrl.searchParams.delete("__path");
+          const restQuery = parsedUrl.searchParams.toString();
+          req.url = `/api/${paramPath.replace(/^\/+/, "")}${restQuery ? `?${restQuery}` : ""}`;
+        } else if (!req.url.startsWith("/api")) {
+          req.url = `/api${req.url.startsWith("/") ? "" : "/"}${req.url}`;
+        }
+      } catch {
+        if (!req.url.startsWith("/api")) {
+          req.url = `/api${req.url.startsWith("/") ? "" : "/"}${req.url}`;
+        }
+      }
     }
+
     return app(req as any, res as any);
   } catch (err: any) {
     console.error("Vercel Serverless Function error:", err);
