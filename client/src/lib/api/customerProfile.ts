@@ -101,18 +101,34 @@ export async function fetchCustomerProfile(
       }
 
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 4000);
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
 
-      const res = await fetch(
-        `https://gateway.superblock.chat/profile?userId=${encodeURIComponent(userId)}`,
-        {
+      let res: Response;
+      try {
+        res = await fetch(`/api/profile?userId=${encodeURIComponent(userId)}`, {
           method: "GET",
           headers: {
             Authorization: `Bearer ${token}`,
           },
           signal: controller.signal,
+        });
+        if (!res.ok) {
+          throw new Error(`Proxy returned status ${res.status}`);
         }
-      ).finally(() => clearTimeout(timeoutId));
+      } catch {
+        res = await fetch(
+          `https://gateway.superblock.chat/profile?userId=${encodeURIComponent(userId)}`,
+          {
+            method: "GET",
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+            signal: controller.signal,
+          }
+        );
+      } finally {
+        clearTimeout(timeoutId);
+      }
 
       if (!res.ok) {
         return null;

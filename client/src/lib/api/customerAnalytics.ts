@@ -319,15 +319,32 @@ export async function fetchCustomerAnalytics(forceRefresh = false): Promise<Cust
       }
 
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 4000);
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
 
-      const res = await fetch("https://gateway.superblock.chat/customeranalytics", {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-        signal: controller.signal,
-      }).finally(() => clearTimeout(timeoutId));
+      let res: Response;
+      try {
+        res = await fetch("/api/customeranalytics", {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+          signal: controller.signal,
+        });
+        if (!res.ok) {
+          throw new Error(`Proxy returned status ${res.status}`);
+        }
+      } catch {
+        // Fallback to direct gateway URL if local proxy fails
+        res = await fetch("https://gateway.superblock.chat/customeranalytics", {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeoutId);
+      }
 
       if (!res.ok) {
         return { success: false, count: 0, users: [] };

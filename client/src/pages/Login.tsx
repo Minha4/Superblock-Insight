@@ -37,7 +37,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { KeyRound } from "lucide-react";
-import { initAmplify, configureAmplifyPool, PRIMARY_POOL, SECONDARY_POOL } from "@/lib/amplify";
+import { initAmplify, configureAmplifyPool, SUPERBLOCK_COGNITO_POOL } from "@/lib/amplify";
 import { useAuth } from "@/contexts/AuthContext";
 
 // Ensure Amplify is initialized
@@ -163,7 +163,7 @@ export default function Login() {
         try {
           currentUser = await getCurrentUser();
         } catch {}
-        if ((currentUser && currentUser.userId) || localStorage.getItem("userId")) {
+        if (currentUser && currentUser.userId) {
           await refreshAuth();
           navigate("/analytics", { replace: true });
         }
@@ -194,9 +194,10 @@ export default function Login() {
 
     try {
       console.log("🔵 Attempting Cognito sign in for:", trimmedUsername);
+      configureAmplifyPool(SUPERBLOCK_COGNITO_POOL);
+
       let user;
       try {
-        configureAmplifyPool(PRIMARY_POOL);
         user = await signIn({
           username: trimmedUsername,
           password,
@@ -211,16 +212,6 @@ export default function Login() {
           (signInErr instanceof Error &&
             signInErr.message.includes("already a signed in user"));
 
-        const isNotFoundOrNotAuth =
-          (signInErr &&
-            typeof signInErr === "object" &&
-            "name" in signInErr &&
-            ((signInErr as any).name === "UserNotFoundException" ||
-              (signInErr as any).name === "NotAuthorizedException")) ||
-          (signInErr instanceof Error &&
-            (signInErr.message.includes("User does not exist") ||
-              signInErr.message.includes("Incorrect username or password")));
-
         if (isAlreadyAuth) {
           console.log("User already authenticated, refreshing session...");
           try {
@@ -231,18 +222,6 @@ export default function Login() {
             });
           } catch {
             // Already signed in, proceed to retrieve user data
-          }
-        } else if (isNotFoundOrNotAuth) {
-          console.log("Attempting secondary pool sign-in...");
-          try {
-            configureAmplifyPool(SECONDARY_POOL);
-            user = await signIn({
-              username: trimmedUsername,
-              password,
-            });
-          } catch (secondErr: unknown) {
-            configureAmplifyPool(PRIMARY_POOL);
-            throw signInErr;
           }
         } else {
           throw signInErr;
@@ -270,16 +249,24 @@ export default function Login() {
         headers["Authorization"] = `Bearer ${token}`;
       }
 
-      const apiUrl = `https://gateway.superblock.chat/login?userId=${userId}`;
+      const apiUrl = `/api/gateway-login?userId=${userId}`;
       console.log("🌐 Fetching user metadata from:", apiUrl);
 
       let userNamedata: Record<string, any> = {};
       try {
-        const res = await fetch(apiUrl, {
+        let res = await fetch(apiUrl, {
           method: "POST",
           headers,
           body: JSON.stringify({ userId }),
         });
+        if (!res.ok) {
+          // Fallback to direct gateway URL
+          res = await fetch(`https://gateway.superblock.chat/login?userId=${userId}`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ userId }),
+          });
+        }
         if (res.ok) {
           userNamedata = await res.json().catch(() => ({}));
           console.log("📦 Backend Response:", userNamedata);
@@ -593,7 +580,7 @@ export default function Login() {
               <Label htmlFor="remember" className="text-[12px] font-normal text-muted-foreground">Keep me signed in on this device</Label>
             </div>
 
-            <Button className="h-11 w-full text-[13px] cursor-pointer" disabled={loading}>
+            <Button type="submit" className="h-11 w-full text-[13px] cursor-pointer" disabled={loading}>
               {loading ? <Loader2 className="size-4 animate-spin" /> : <LockKeyhole className="size-4" />}
               {loading ? "Signing in…" : "Sign in securely"}
               {!loading && <ArrowRight className="ml-auto size-4" />}

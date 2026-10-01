@@ -77,6 +77,104 @@ app.get(["/api/health", "/health"], (_req, res) => {
   });
 });
 
+// Gateway Proxy: /api/customeranalytics -> https://gateway.superblock.chat/customeranalytics
+app.get("/api/customeranalytics", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (authHeader) {
+      headers.Authorization = authHeader;
+    }
+
+    const gatewayRes = await fetch("https://gateway.superblock.chat/customeranalytics", {
+      method: "GET",
+      headers,
+    });
+
+    const contentType = gatewayRes.headers.get("content-type") || "";
+    if (contentType.includes("application/json")) {
+      const data = await gatewayRes.json();
+      return res.status(gatewayRes.status).json(data);
+    } else {
+      const text = await gatewayRes.text();
+      try {
+        const parsed = JSON.parse(text);
+        return res.status(gatewayRes.status).json(parsed);
+      } catch {
+        return res.status(gatewayRes.status).send(text);
+      }
+    }
+  } catch (error: any) {
+    console.error("Error proxying customeranalytics:", error);
+    return res.status(500).json({ success: false, error: error?.message || "Internal server error" });
+  }
+});
+
+// Gateway Proxy: /api/profile -> https://gateway.superblock.chat/profile
+app.get("/api/profile", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const userId = (req.query.userId as string) || "";
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (authHeader) {
+      headers.Authorization = authHeader;
+    }
+
+    const gatewayUrl = `https://gateway.superblock.chat/profile?userId=${encodeURIComponent(userId)}`;
+    const gatewayRes = await fetch(gatewayUrl, {
+      method: "GET",
+      headers,
+    });
+
+    const contentType = gatewayRes.headers.get("content-type") || "";
+    if (contentType.includes("application/json")) {
+      const data = await gatewayRes.json();
+      return res.status(gatewayRes.status).json(data);
+    }
+    const text = await gatewayRes.text();
+    return res.status(gatewayRes.status).send(text);
+  } catch (error: any) {
+    console.error("Error proxying profile:", error);
+    return res.status(500).json({ success: false, error: error?.message || "Internal server error" });
+  }
+});
+
+// Gateway Proxy: /api/gateway-login -> https://gateway.superblock.chat/login
+app.post("/api/gateway-login", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const userId = (req.query.userId as string) || req.body?.userId || "";
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (authHeader) {
+      headers.Authorization = authHeader;
+    }
+
+    const gatewayUrl = `https://gateway.superblock.chat/login?userId=${encodeURIComponent(userId)}`;
+    const gatewayRes = await fetch(gatewayUrl, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(req.body || {}),
+    });
+
+    const contentType = gatewayRes.headers.get("content-type") || "";
+    if (contentType.includes("application/json")) {
+      const data = await gatewayRes.json();
+      return res.status(gatewayRes.status).json(data);
+    }
+    const text = await gatewayRes.text();
+    return res.status(gatewayRes.status).send(text);
+  } catch (error: any) {
+    console.error("Error proxying gateway login:", error);
+    return res.status(500).json({ success: false, error: error?.message || "Internal server error" });
+  }
+});
+
   // Session cookie management endpoint
   app.post("/api/set-user-session", (req, res) => {
     try {

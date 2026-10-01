@@ -27,8 +27,11 @@ function Router() {
       <Route path="/usage" component={() => <ProtectedRoute component={Usage} />} />
       <Route path="/subscriptions" component={() => <ProtectedRoute component={Subscriptions} />} />
       <Route path="/products" component={() => <ProtectedRoute component={ProductsPlans} />} />
+      <Route path="/plans" component={() => <ProtectedRoute component={ProductsPlans} />} />
       <Route path="/invoices" component={() => <ProtectedRoute component={Invoices} />} />
+      <Route path="/billing" component={() => <ProtectedRoute component={Invoices} />} />
       <Route path="/team" component={() => <ProtectedRoute component={Team} />} />
+      <Route path="/management" component={() => <ProtectedRoute component={Team} />} />
       <Route path="/settings" component={() => <ProtectedRoute component={Settings} />} />
       <Route component={NotFound} />
     </Switch>

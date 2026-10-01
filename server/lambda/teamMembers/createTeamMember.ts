@@ -128,7 +128,7 @@ export async function createTeamMemberHandler(
     const cognitoClientId =
       process.env.VITE_AWS_USER_POOLS_WEB_CLIENT_ID ||
       process.env.NEXT_PUBLIC_AWS_USER_POOLS_WEB_CLIENT_ID ||
-      "4t46u2ot1h9b9d5no9qsnt2fgj";
+      "6hrdibr3fdis15rb72qg2erssn";
     const cognitoRegion =
       process.env.AWS_REGION ||
       process.env.VITE_AWS_REGION ||
