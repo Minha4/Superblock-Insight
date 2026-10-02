@@ -1,27 +1,25 @@
 import { useMemo, useState } from "react";
 import { Area, AreaChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { Activity, Box, Download, MessageCircle, Workflow, Zap, RefreshCw } from "lucide-react";
+import { Activity, Box, Download, MessageCircle, Workflow, Zap } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
 import { AnalyticsToolbar, PageHeader, SectionHeader, StatusBadge, downloadCsv } from "@/components/dashboard-ui";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { analyticsSeries, formatNumber } from "@/data/mockData";
+import { formatNumber } from "@/data/mockData";
 import { useCustomerAnalytics } from "@/lib/api/customerAnalytics";
+import { useUsageMetrics } from "@/lib/api/usage";
 import { toast } from "sonner";
 
-const mix = [
-  { name: "WhatsApp", value: 64, fill: "var(--whatsapp)" },
-  { name: "Email", value: 19, fill: "var(--email)" },
-  { name: "SMS", value: 9, fill: "var(--sms)" },
-  { name: "API & other", value: 8, fill: "var(--chart-4)" },
-];
-
 export default function Usage() {
-  const { customers, loading, refresh: reloadAnalytics } = useCustomerAnalytics();
+  const { customers, loading: customersLoading, refresh: reloadAnalytics } = useCustomerAnalytics();
+  const { data: usageData, loading: usageLoading, refresh: reloadUsage } = useUsageMetrics();
+
   const [range, setRange] = useState("Last 30 days");
   const [channel, setChannel] = useState("All channels");
   const [product, setProduct] = useState("All products");
   const [region, setRegion] = useState("All regions");
+
+  const loading = customersLoading || usageLoading;
 
   const rows = useMemo(() => {
     return customers
@@ -30,24 +28,119 @@ export default function Usage() {
   }, [customers, region]);
 
   const totals = useMemo(() => {
-    const totalMessages = customers.reduce((acc, c) => acc + (c.usage?.messages || 0), 0);
-    const totalApi = customers.reduce((acc, c) => acc + (c.usage?.api || 0), 0);
-    const totalAutomations = customers.reduce((acc, c) => acc + (c.usage?.automations || 0), 0);
-    const totalStorage = customers.reduce((acc, c) => acc + (c.usage?.storage || 0), 0);
-    const totalConversations = customers.reduce((acc, c) => acc + (c.usage?.conversations || 0), 0);
+    // 1. Messages: Prefer real public.usage_metrics aggregated breakdown, or customer accounts sum, or plan message volume
+    const liveMessagesMetric = usageData?.metricBreakdown?.messages?.totalValue;
+    const planMessagesQuota = usageData?.planMetrics?.totalConfiguredMessageVolume;
+    const customerMessagesSum = customers.reduce((acc, c) => acc + (c.usage?.messages || 0), 0);
+    const rawMessages = liveMessagesMetric ?? (customerMessagesSum > 0 ? customerMessagesSum : (planMessagesQuota ?? 0));
+
+    // 2. API Requests
+    const liveApiMetric =
+      usageData?.metricBreakdown?.api_requests?.totalValue ??
+      usageData?.metricBreakdown?.api?.totalValue;
+    const customerApiSum = customers.reduce((acc, c) => acc + (c.usage?.api || 0), 0);
+    const rawApi = liveApiMetric ?? customerApiSum;
+
+    // 3. Automations
+    const liveAutomationsMetric = usageData?.metricBreakdown?.automations?.totalValue;
+    const customerAutomationsSum = customers.reduce((acc, c) => acc + (c.usage?.automations || 0), 0);
+    const rawAutomations = liveAutomationsMetric ?? customerAutomationsSum;
+
+    // 4. Storage
+    const liveStorageMetric = usageData?.metricBreakdown?.storage?.totalValue;
+    const customerStorageSum = customers.reduce((acc, c) => acc + (c.usage?.storage || 0), 0);
+    const rawStorage = liveStorageMetric ?? customerStorageSum;
+
+    // 5. Active conversations / Contacts
+    const liveConversationsMetric = usageData?.metricBreakdown?.conversations?.totalValue;
+    const liveContactsMetric = usageData?.contactsSummary?.totalContacts;
+    const customerConversationsSum = customers.reduce((acc, c) => acc + (c.usage?.conversations || 0), 0);
+    const rawConversations = liveConversationsMetric ?? (liveContactsMetric ?? customerConversationsSum);
 
     return {
-      messages: totalMessages > 1000 ? formatNumber(totalMessages) : "24.8M",
-      api: totalApi > 1000 ? formatNumber(totalApi) : "51.2M",
-      automations: totalAutomations > 100 ? formatNumber(totalAutomations) : "642K",
-      storage: totalStorage > 0 ? `${totalStorage} GB` : "18.4 TB",
-      conversations: totalConversations > 0 ? formatNumber(totalConversations) : "8,240",
+      messages: rawMessages > 0 ? formatNumber(rawMessages) : "0",
+      rawMessages,
+      messagesSubtext: liveMessagesMetric !== undefined
+        ? "Verified delivery"
+        : planMessagesQuota
+        ? "Configured plan quota"
+        : "Live metric",
+      api: rawApi > 0 ? formatNumber(rawApi) : "0",
+      rawApi,
+      apiSubtext: rawApi > 0 ? "Live requests" : "No requests recorded",
+      automations: rawAutomations > 0 ? formatNumber(rawAutomations) : "0",
+      rawAutomations,
+      automationsSubtext: rawAutomations > 0 ? "Live runs" : "No automations recorded",
+      storage: rawStorage > 0 ? `${rawStorage} GB` : "0 GB",
+      rawStorage,
+      storageSubtext: rawStorage > 0 ? "Allocated" : "No storage recorded",
+      conversations: rawConversations > 0 ? formatNumber(rawConversations) : "0",
+      rawConversations,
+      conversationsSubtext: liveContactsMetric !== undefined
+        ? "Operational contacts"
+        : rawConversations > 0
+        ? "Active sessions"
+        : "No active sessions",
     };
-  }, [customers]);
+  }, [customers, usageData]);
+
+  const totalEvents = totals.rawMessages + totals.rawApi + totals.rawConversations;
+
+  // Real channel mix calculation or honest zero state
+  const channelMix = useMemo(() => {
+    const rawWhatsApp = totals.rawMessages;
+    const rawApi = totals.rawApi;
+    const sum = rawWhatsApp + rawApi;
+
+    if (sum === 0) {
+      return [
+        { name: "WhatsApp", value: 0, fill: "var(--whatsapp)" },
+        { name: "Email", value: 0, fill: "var(--email)" },
+        { name: "SMS", value: 0, fill: "var(--sms)" },
+        { name: "API & other", value: 0, fill: "var(--chart-4)" },
+      ];
+    }
+
+    const whatsappPct = Math.round((rawWhatsApp / sum) * 100);
+    const apiPct = 100 - whatsappPct;
+
+    return [
+      { name: "WhatsApp", value: whatsappPct, fill: "var(--whatsapp)" },
+      { name: "Email", value: 0, fill: "var(--email)" },
+      { name: "SMS", value: 0, fill: "var(--sms)" },
+      { name: "API & other", value: apiPct, fill: "var(--chart-4)" },
+    ];
+  }, [totals]);
+
+  // Real historical trend data if available in usage_metrics
+  const trendData = useMemo(() => {
+    if (!usageData?.usageMetrics || usageData.usageMetrics.length === 0) {
+      return [];
+    }
+
+    // Group genuine usage_metrics by date
+    const dateMap = new Map<string, { date: string; messages: number; api: number }>();
+    for (const record of usageData.usageMetrics) {
+      if (!record.recorded_at) continue;
+      const dateKey = record.recorded_at.slice(0, 10);
+      if (!dateMap.has(dateKey)) {
+        dateMap.set(dateKey, { date: dateKey, messages: 0, api: 0 });
+      }
+      const entry = dateMap.get(dateKey)!;
+      const val = Number(record.metric_value) || 0;
+      if (record.metric_name === "messages") {
+        entry.messages += val;
+      } else {
+        entry.api += val;
+      }
+    }
+
+    return Array.from(dateMap.values()).sort((a, b) => a.date.localeCompare(b.date));
+  }, [usageData]);
 
   const handleRefresh = async () => {
     try {
-      await reloadAnalytics();
+      await Promise.allSettled([reloadAnalytics(), reloadUsage()]);
       toast.success("Usage metrics refreshed from live source");
     } catch {
       toast.error("Failed to refresh usage data");
@@ -60,9 +153,9 @@ export default function Usage() {
       rows.map((c) => ({
         Customer: c.company,
         Region: c.region,
-        Messages: c.usage.messages,
-        API: c.usage.api,
-        Automations: c.usage.automations,
+        Messages: c.usage?.messages || 0,
+        API: c.usage?.api || 0,
+        Automations: c.usage?.automations || 0,
       }))
     );
     toast.success("Usage exported");
@@ -84,6 +177,13 @@ export default function Usage() {
           loading={loading}
         />
       </div>
+
+      {usageData?.warning && (
+        <div className="mt-3 rounded-md border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+          <span className="font-semibold">Operational Data Notice:</span> {usageData.warning}
+        </div>
+      )}
+
       <div className="mt-3 flex flex-wrap gap-2">
         <SmallSelect
           value={channel}
@@ -101,14 +201,15 @@ export default function Usage() {
           items={["All regions", "India", "ap-south-1", "UAE", "Singapore"]}
         />
       </div>
+
       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         {[
-          ["Messages", totals.messages, "+18.6%", MessageCircle],
-          ["API requests", totals.api, "+22.1%", Zap],
-          ["Automations", totals.automations, "+14.7%", Workflow],
-          ["Storage", totals.storage, "+6.1%", Box],
-          ["Active conversations", totals.conversations, "+11.2%", Activity],
-        ].map(([label, value, change, Icon]) => (
+          ["Messages", totals.messages, totals.messagesSubtext, MessageCircle],
+          ["API requests", totals.api, totals.apiSubtext, Zap],
+          ["Automations", totals.automations, totals.automationsSubtext, Workflow],
+          ["Storage", totals.storage, totals.storageSubtext, Box],
+          ["Active conversations", totals.conversations, totals.conversationsSubtext, Activity],
+        ].map(([label, value, subtext, Icon]) => (
           <div className="metric-card" key={label as string}>
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
@@ -119,13 +220,13 @@ export default function Usage() {
             <div className="mt-4 font-tabular text-2xl font-semibold">
               {value as string}
             </div>
-            <div className="mt-1 text-[11px] font-semibold text-emerald-600">
-              {change as string}{" "}
-              <span className="font-normal text-muted-foreground">vs previous period</span>
+            <div className="mt-1 text-[11px] font-medium text-muted-foreground">
+              {subtext as string}
             </div>
           </div>
         ))}
       </div>
+
       <div className="mt-4 grid gap-4 xl:grid-cols-[1.6fr_1fr]">
         <div className="panel p-4">
           <SectionHeader
@@ -133,69 +234,71 @@ export default function Usage() {
             description={`${range} · ${channel} · ${product}`}
           />
           <div className="h-[310px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart
-                data={analyticsSeries}
-                margin={{ top: 8, right: 5, left: -20, bottom: 0 }}
-              >
-                <defs>
-                  <linearGradient id="usage-main" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0" stopColor="var(--chart-1)" stopOpacity={0.25} />
-                    <stop offset="1" stopColor="var(--chart-1)" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--chart-grid)" />
-                <XAxis
-                  dataKey="date"
-                  tickLine={false}
-                  axisLine={false}
-                  tick={{ fontSize: 9, fill: "var(--muted-foreground)" }}
-                  dy={8}
-                />
-                <YAxis
-                  tickLine={false}
-                  axisLine={false}
-                  tick={{ fontSize: 9, fill: "var(--muted-foreground)" }}
-                />
-                <Tooltip
-                  contentStyle={{
-                    borderRadius: 8,
-                    fontSize: 10,
-                    background: "var(--popover)",
-                    borderColor: "var(--border)",
-                  }}
-                />
-                <Area
-                  type="monotone"
-                  dataKey="whatsapp"
-                  name="WhatsApp"
-                  stroke="var(--whatsapp)"
-                  fill="url(#usage-main)"
-                  strokeWidth={2}
-                  dot={false}
-                />
-                <Area
-                  type="monotone"
-                  dataKey="email"
-                  name="Email"
-                  stroke="var(--email)"
-                  fill="transparent"
-                  strokeWidth={1.8}
-                  dot={false}
-                />
-                <Area
-                  type="monotone"
-                  dataKey="sms"
-                  name="SMS"
-                  stroke="var(--sms)"
-                  fill="transparent"
-                  strokeWidth={1.8}
-                  dot={false}
-                />
-              </AreaChart>
-            </ResponsiveContainer>
+            {trendData.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart
+                  data={trendData}
+                  margin={{ top: 8, right: 5, left: -20, bottom: 0 }}
+                >
+                  <defs>
+                    <linearGradient id="usage-main" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0" stopColor="var(--chart-1)" stopOpacity={0.25} />
+                      <stop offset="1" stopColor="var(--chart-1)" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--chart-grid)" />
+                  <XAxis
+                    dataKey="date"
+                    tickLine={false}
+                    axisLine={false}
+                    tick={{ fontSize: 9, fill: "var(--muted-foreground)" }}
+                    dy={8}
+                  />
+                  <YAxis
+                    tickLine={false}
+                    axisLine={false}
+                    tick={{ fontSize: 9, fill: "var(--muted-foreground)" }}
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      borderRadius: 8,
+                      fontSize: 10,
+                      background: "var(--popover)",
+                      borderColor: "var(--border)",
+                    }}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="messages"
+                    name="Messages"
+                    stroke="var(--whatsapp)"
+                    fill="url(#usage-main)"
+                    strokeWidth={2}
+                    dot={false}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="api"
+                    name="API Requests"
+                    stroke="var(--chart-4)"
+                    fill="transparent"
+                    strokeWidth={1.8}
+                    dot={false}
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="flex h-full flex-col items-center justify-center text-center p-6">
+                <Activity className="size-8 text-muted-foreground/40 mb-2" />
+                <p className="text-sm font-medium text-foreground">No historical trend data available</p>
+                <p className="text-xs text-muted-foreground mt-1 max-w-sm">
+                  Historical telemetry will automatically plot here as metrics are logged to the SuperBlock operational database.
+                </p>
+              </div>
+            )}
           </div>
         </div>
+
         <div className="panel p-4">
           <SectionHeader
             title="Channel mix"
@@ -205,14 +308,14 @@ export default function Usage() {
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie
-                  data={mix}
+                  data={channelMix}
                   dataKey="value"
                   innerRadius={58}
                   outerRadius={82}
                   paddingAngle={2}
                   stroke="none"
                 >
-                  {mix.map((item) => (
+                  {channelMix.map((item) => (
                     <Cell key={item.name} fill={item.fill} />
                   ))}
                 </Pie>
@@ -228,13 +331,15 @@ export default function Usage() {
             </ResponsiveContainer>
             <div className="pointer-events-none absolute inset-0 grid place-items-center text-center">
               <div>
-                <div className="font-tabular text-xl font-semibold">38.7M</div>
+                <div className="font-tabular text-xl font-semibold">
+                  {totalEvents > 0 ? formatNumber(totalEvents) : "0"}
+                </div>
                 <div className="text-[10px] text-muted-foreground">events</div>
               </div>
             </div>
           </div>
           <div className="grid grid-cols-2 gap-2">
-            {mix.map((item) => (
+            {channelMix.map((item) => (
               <div
                 className="flex items-center justify-between rounded-md bg-muted/35 p-2 text-[11px]"
                 key={item.name}
@@ -252,6 +357,7 @@ export default function Usage() {
           </div>
         </div>
       </div>
+
       <div className="mt-4 panel overflow-hidden">
         <div className="flex items-center justify-between p-4 pb-2">
           <SectionHeader
@@ -283,44 +389,52 @@ export default function Usage() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((customer) => (
-                <tr key={customer.id}>
-                  <td className="font-medium">
-                    {customer.company}
-                    <div className="font-mono text-[10px] text-muted-foreground">
-                      {customer.id}
-                    </div>
-                  </td>
-                  <td>{customer.region}</td>
-                  <td className="text-right font-tabular">
-                    {formatNumber(customer.usage.messages)}
-                  </td>
-                  <td className="text-right font-tabular">
-                    {formatNumber(customer.usage.conversations)}
-                  </td>
-                  <td className="text-right font-tabular">
-                    {formatNumber(customer.usage.api)}
-                  </td>
-                  <td className="text-right font-tabular">
-                    {formatNumber(customer.usage.automations)}
-                  </td>
-                  <td className="text-right font-tabular">
-                    {customer.usage.storage} GB
-                  </td>
-                  <td>
-                    <StatusBadge
-                      status={
-                        customer.health.usageTrend === "Declining"
-                          ? "At Risk"
-                          : customer.health.usageTrend === "Stable"
-                          ? "Private"
-                          : "Active"
-                      }
-                      dot={false}
-                    />
+              {rows.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="text-center py-8 text-muted-foreground">
+                    {loading ? "Loading usage records..." : "No customer usage records available"}
                   </td>
                 </tr>
-              ))}
+              ) : (
+                rows.map((customer) => (
+                  <tr key={customer.id}>
+                    <td className="font-medium">
+                      {customer.company}
+                      <div className="font-mono text-[10px] text-muted-foreground">
+                        {customer.id}
+                      </div>
+                    </td>
+                    <td>{customer.region}</td>
+                    <td className="text-right font-tabular">
+                      {formatNumber(customer.usage?.messages || 0)}
+                    </td>
+                    <td className="text-right font-tabular">
+                      {formatNumber(customer.usage?.conversations || 0)}
+                    </td>
+                    <td className="text-right font-tabular">
+                      {formatNumber(customer.usage?.api || 0)}
+                    </td>
+                    <td className="text-right font-tabular">
+                      {formatNumber(customer.usage?.automations || 0)}
+                    </td>
+                    <td className="text-right font-tabular">
+                      {customer.usage?.storage || 0} GB
+                    </td>
+                    <td>
+                      <StatusBadge
+                        status={
+                          customer.health?.usageTrend === "Declining"
+                            ? "At Risk"
+                            : customer.health?.usageTrend === "Stable"
+                            ? "Private"
+                            : "Active"
+                        }
+                        dot={false}
+                      />
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
