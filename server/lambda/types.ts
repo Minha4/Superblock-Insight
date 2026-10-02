@@ -723,11 +723,43 @@ export interface UsageMetricRecord {
   created_at: string | null;
 }
 
+export interface MetricSummary {
+  metricName: string;
+  count: number;
+  totalValue: number | null;
+  avgValue: number | null;
+  maxValue: number | null;
+  unit: string | null;
+  earliestRecordedAt: string | null;
+  latestRecordedAt: string | null;
+}
+
+export interface PlanMessageVolumeCustomer {
+  userId: string;
+  userName: string | null;
+  plan: string | null;
+  messageVolume: number;
+}
+
+export interface PlanMetricsSummary {
+  totalConfiguredMessageVolume: number | null;
+  configuredCustomersCount: number;
+  customers?: PlanMessageVolumeCustomer[];
+  note: string;
+}
+
 export interface GetUsageMetricsResponse {
   success: boolean;
+  scope?: "platform" | "customer";
   count: number;
-  customerId: string;
+  customerId?: string;
   usageMetrics: UsageMetricRecord[];
+  metricBreakdown?: Record<string, MetricSummary>;
+  planMetrics?: PlanMetricsSummary;
+  contactsSummary?: {
+    totalContacts: number | null;
+  };
+  warning?: string;
   error?: string;
 }
 

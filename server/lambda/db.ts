@@ -294,12 +294,99 @@ export async function query<T extends QueryResultRow = any>(
   return pool.query<T>(text, params);
 }
 
+let cachedOperationalPool: Pool | null = null;
+
 /**
- * Gracefully shuts down the connection pool (useful in testing or teardown).
+ * Initializes and returns a singleton PostgreSQL connection pool specifically
+ * for the SuperBlock operational database ('superblockhq').
+ * This is isolated from the user-facing Supabase instance.
+ */
+export async function getOperationalPool(): Promise<Pool> {
+  if (cachedOperationalPool) {
+    return cachedOperationalPool;
+  }
+
+  loadEnv();
+
+  const username = process.env.DB_USER || process.env.PGUSER || "superblockhq";
+  let password = process.env.DB_PASSWORD || process.env.PGPASSWORD || "";
+
+  const secretArn = process.env.DB_SECRET_ARN;
+  if (!password && secretArn) {
+    try {
+      const { SecretsManagerClient, GetSecretValueCommand } = await import(
+        "@aws-sdk/client-secrets-manager"
+      );
+      const client = new SecretsManagerClient({ region: REGION });
+      const command = new GetSecretValueCommand({ SecretId: secretArn });
+      const response = await client.send(command);
+
+      if (response.SecretString) {
+        try {
+          const parsed = JSON.parse(response.SecretString);
+          password = parsed.password || "";
+        } catch {
+          password = response.SecretString;
+        }
+      }
+    } catch (err: any) {
+      console.warn("Could not retrieve secret from Secrets Manager for operational DB:", err?.message || err);
+    }
+  }
+
+  const host = process.env.DB_HOST || "127.0.0.1";
+  const port = parseInt(
+    process.env.DB_PORT || (process.env.AWS_EXECUTION_ENV ? "5432" : "5433"),
+    10
+  );
+  const database = process.env.DB_NAME || "superblockhq";
+  const maxPoolSize = parseInt(process.env.DB_POOL_MAX || "2", 10);
+  const useSsl =
+    process.env.DB_SSL === "false"
+      ? false
+      : { rejectUnauthorized: false };
+
+  cachedOperationalPool = new Pool({
+    host,
+    port,
+    database,
+    user: username,
+    password,
+    max: maxPoolSize,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 5000,
+    ssl: useSsl,
+  });
+
+  cachedOperationalPool.on("error", (err) => {
+    console.error("Unexpected error on idle operational PostgreSQL pool:", err);
+    cachedOperationalPool = null;
+  });
+
+  return cachedOperationalPool;
+}
+
+/**
+ * Executes a parameterized SQL query safely against the SuperBlock operational PostgreSQL database ('superblockhq').
+ */
+export async function operationalQuery<T extends QueryResultRow = any>(
+  text: string,
+  params?: any[]
+): Promise<QueryResult<T>> {
+  const pool = await getOperationalPool();
+  return pool.query<T>(text, params);
+}
+
+/**
+ * Gracefully shuts down the connection pools (useful in testing or teardown).
  */
 export async function closePool(): Promise<void> {
   if (cachedPool) {
     await cachedPool.end();
     cachedPool = null;
+  }
+  if (cachedOperationalPool) {
+    await cachedOperationalPool.end();
+    cachedOperationalPool = null;
   }
 }
