@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { getCurrentUser } from "aws-amplify/auth";
 import { fetchCustomerAnalytics, useCustomerAnalytics } from "@/lib/api/customerAnalytics";
+import { useUsageMetrics } from "@/lib/api/usage";
 import { Link } from "wouter";
 import {
   Area,
@@ -46,13 +47,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  analyticsSeries,
-  conversationSeries,
-  recentActivity,
-  formatCurrency,
-  formatNumber,
-} from "@/data/mockData";
 import { useApp } from "@/contexts/AppContext";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -75,13 +69,134 @@ const channelColors: Record<string, string> = {
 
 type ChartState = "data" | "empty" | "error";
 
+function formatCurrency(value: number): string {
+  if (!value || isNaN(value)) return "₹0";
+  if (value >= 10000000) return `₹${(value / 10000000).toFixed(2)}Cr`;
+  if (value >= 100000) return `₹${(value / 100000).toFixed(1)}L`;
+  return `₹${value.toLocaleString("en-IN")}`;
+}
+
+function formatNumber(value: number): string {
+  if (!value || isNaN(value)) return "0";
+  if (value >= 1000000) return `${(value / 1000000).toFixed(1)}M`;
+  if (value >= 1000) return `${(value / 1000).toFixed(1)}K`;
+  return value.toLocaleString("en-IN");
+}
+
+function getDateCutoffMs(range: string): number {
+  const now = Date.now();
+  switch (range) {
+    case "Today":
+      return now - 24 * 60 * 60 * 1000;
+    case "Yesterday":
+      return now - 48 * 60 * 60 * 1000;
+    case "Last 7 days":
+      return now - 7 * 24 * 60 * 60 * 1000;
+    case "This month": {
+      const d = new Date();
+      d.setDate(1);
+      d.setHours(0, 0, 0, 0);
+      return d.getTime();
+    }
+    case "Last month": {
+      const d = new Date();
+      d.setMonth(d.getMonth() - 1);
+      d.setDate(1);
+      d.setHours(0, 0, 0, 0);
+      return d.getTime();
+    }
+    case "Last 30 days":
+    default:
+      return now - 30 * 24 * 60 * 60 * 1000;
+  }
+}
+
 export default function AnalyticsStudio() {
   const { isRefreshing, refreshData } = useApp();
   const { customers, loading: analyticsLoading, refresh: reloadAnalytics } = useCustomerAnalytics();
+  const { data: usageData, loading: usageLoading, refresh: reloadUsage } = useUsageMetrics();
+
+  const [subscriptions, setSubscriptions] = useState<any[]>([]);
+  const [subsLoading, setSubsLoading] = useState<boolean>(true);
+
+  const [activities, setActivities] = useState<any[]>([]);
+  const [activitiesLoading, setActivitiesLoading] = useState<boolean>(true);
+
+  const [tickets, setTickets] = useState<any[]>([]);
+  const [ticketsLoading, setTicketsLoading] = useState<boolean>(true);
 
   const [dateRange, setDateRange] = useState("Last 30 days");
   const [activityMetrics, setActivityMetrics] = useState(["DAU", "WAU", "MAU"]);
   const [chartState, setChartState] = useState<ChartState>("data");
+
+  const loadSubscriptions = useCallback(async () => {
+    setSubsLoading(true);
+    try {
+      const res = await fetch("/api/subscriptions");
+      if (res.ok) {
+        const json = await res.json();
+        if (json?.success && Array.isArray(json?.subscriptions)) {
+          setSubscriptions(json.subscriptions);
+        } else {
+          setSubscriptions([]);
+        }
+      } else {
+        setSubscriptions([]);
+      }
+    } catch {
+      setSubscriptions([]);
+    } finally {
+      setSubsLoading(false);
+    }
+  }, []);
+
+  const loadActivities = useCallback(async () => {
+    setActivitiesLoading(true);
+    try {
+      const res = await fetch("/api/customer-activities");
+      if (res.ok) {
+        const json = await res.json();
+        if (json?.success && Array.isArray(json?.activities)) {
+          setActivities(json.activities);
+        } else {
+          setActivities([]);
+        }
+      } else {
+        setActivities([]);
+      }
+    } catch {
+      setActivities([]);
+    } finally {
+      setActivitiesLoading(false);
+    }
+  }, []);
+
+  const loadTickets = useCallback(async () => {
+    setTicketsLoading(true);
+    try {
+      const res = await fetch("/api/customer-tickets");
+      if (res.ok) {
+        const json = await res.json();
+        if (json?.success && Array.isArray(json?.tickets)) {
+          setTickets(json.tickets);
+        } else {
+          setTickets([]);
+        }
+      } else {
+        setTickets([]);
+      }
+    } catch {
+      setTickets([]);
+    } finally {
+      setTicketsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadSubscriptions();
+    loadActivities();
+    loadTickets();
+  }, [loadSubscriptions, loadActivities, loadTickets]);
 
   const toggleMetric = (metric: string) =>
     setActivityMetrics((metrics) =>
@@ -90,85 +205,463 @@ export default function AnalyticsStudio() {
         : [...metrics, metric]
     );
 
-  const topCustomers = useMemo(() => {
-    return [...customers]
-      .sort((a, b) => (b.usage?.messages || 0) - (a.usage?.messages || 0))
-      .slice(0, 6);
-  }, [customers]);
-
+  // 1. TOP KPI CARDS (Preserved real calculation)
   const computedKpis = useMemo(() => {
     const totalCustomers = customers.length;
     const activeCount = customers.filter((c) => c.status === "Active").length;
-    const totalMessages = customers.reduce(
-      (acc, c) => acc + (c.usage?.messages || 0),
-      0
-    );
-    const totalMrr = customers.reduce(
-      (acc, c) => acc + (c.subscription?.mrr || 0),
-      0
-    );
-    const renewalsDue = customers.filter(
-      (c) =>
-        c.status === "Renewal Due" ||
-        (c.renewal && (c.renewal.includes("days") || c.renewal.includes("mos")))
-    ).length;
     const conversionRate =
       totalCustomers > 0
         ? ((activeCount / totalCustomers) * 100).toFixed(1)
-        : "34.7";
+        : "0.0";
+
+    const customerDates = customers
+      .map((c) => (c.activatedAt && c.activatedAt !== "—" ? new Date(c.activatedAt).getTime() : 0))
+      .filter((t) => t > 0)
+      .sort((a, b) => a - b);
+
+    let activeCustomerSpark = [0, 0, 0, 0, 0, 0, 0];
+    let customerChange = 0;
+    if (customerDates.length >= 2) {
+      const minDate = customerDates[0];
+      const maxDate = customerDates[customerDates.length - 1];
+      const step = (maxDate - minDate) / 6;
+      if (step > 0) {
+        activeCustomerSpark = Array.from({ length: 7 }, (_, i) => {
+          const threshold = minDate + step * i;
+          return customerDates.filter((t) => t <= threshold).length;
+        });
+      }
+      const now = Date.now();
+      const thirtyDays = 30 * 24 * 60 * 60 * 1000;
+      const recentNew = customerDates.filter((t) => t >= now - thirtyDays).length;
+      const priorNew = customerDates.filter(
+        (t) => t >= now - thirtyDays * 2 && t < now - thirtyDays
+      ).length;
+      if (priorNew > 0) {
+        customerChange = Number((((recentNew - priorNew) / priorNew) * 100).toFixed(1));
+      }
+    }
+
+    const metricBreakdown = usageData?.metricBreakdown || {};
+    const usageRecords = (usageData?.usageMetrics || []).filter(
+      (m) => m.metric_value !== null
+    );
+
+    const activeUsageCustomerIds = new Set(
+      usageRecords
+        .filter((m) => m.customer_id && (Number(m.metric_value) || 0) > 0)
+        .map((m) => m.customer_id)
+    );
+    const recordedActiveUsers = activeUsageCustomerIds.size;
+    const breakdownUsers =
+      metricBreakdown.active_users?.totalValue ??
+      metricBreakdown.users?.totalValue ??
+      null;
+    const realMau = breakdownUsers !== null ? Number(breakdownUsers) : recordedActiveUsers;
+
+    const deliveredMessages =
+      (Number(metricBreakdown.messages?.totalValue) || 0) +
+      (Number(metricBreakdown.whatsapp?.totalValue) || 0) +
+      (Number(metricBreakdown.broadcasts?.totalValue) || 0);
+    const configuredVolume =
+      Number(usageData?.planMetrics?.totalConfiguredMessageVolume) || 0;
+    const hasDeliveredMessages = deliveredMessages > 0;
+    const totalMessages = hasDeliveredMessages ? deliveredMessages : configuredVolume;
+
+    const messageRecords = usageRecords
+      .filter((m) => m.metric_name && /message|whatsapp|broadcast/i.test(m.metric_name))
+      .sort((a, b) => new Date(a.recorded_at || a.created_at || 0).getTime() - new Date(b.recorded_at || b.created_at || 0).getTime());
+
+    let messageSpark = [0, 0, 0, 0, 0, 0, 0];
+    let messageChange = 0;
+    if (messageRecords.length >= 2) {
+      const vals = messageRecords.slice(-7).map((m) => Number(m.metric_value) || 0);
+      messageSpark = vals;
+      while (messageSpark.length < 7) {
+        messageSpark.unshift(0);
+      }
+      const now = Date.now();
+      const thirtyDays = 30 * 24 * 60 * 60 * 1000;
+      const recentSum = messageRecords
+        .filter((m) => new Date(m.recorded_at || m.created_at || 0).getTime() >= now - thirtyDays)
+        .reduce((sum, m) => sum + (Number(m.metric_value) || 0), 0);
+      const priorSum = messageRecords
+        .filter((m) => {
+          const t = new Date(m.recorded_at || m.created_at || 0).getTime();
+          return t >= now - thirtyDays * 2 && t < now - thirtyDays;
+        })
+        .reduce((sum, m) => sum + (Number(m.metric_value) || 0), 0);
+      if (priorSum > 0) {
+        messageChange = Number((((recentSum - priorSum) / priorSum) * 100).toFixed(1));
+      }
+    }
+
+    const activeSubs = subscriptions.filter(
+      (s) => (s.status || "").toLowerCase() === "active"
+    );
+    const totalMrr = activeSubs.reduce(
+      (sum, s) => sum + (Number(s.amount) || Number(s.mrr) || 0),
+      0
+    );
+
+    const nowTime = Date.now();
+    const in30DaysTime = nowTime + 30 * 24 * 60 * 60 * 1000;
+    const renewalsDue = subscriptions.filter((s) => {
+      const status = (s.status || "").toLowerCase();
+      if (status === "renewal due" || status === "renewal_due") return true;
+      const dateStr = s.end_date || s.renewalDate;
+      if (!dateStr) return false;
+      const d = new Date(dateStr).getTime();
+      return !isNaN(d) && d >= nowTime && d <= in30DaysTime;
+    }).length;
+
+    let mrrSpark = [0, 0, 0, 0, 0, 0, 0];
+    if (activeSubs.length >= 2) {
+      const sortedSubs = [...activeSubs].sort(
+        (a, b) => new Date(a.created_at || a.start_date || 0).getTime() - new Date(b.created_at || b.start_date || 0).getTime()
+      );
+      const vals = sortedSubs.slice(-7).map((s) => Number(s.amount) || Number(s.mrr) || 0);
+      mrrSpark = vals;
+      while (mrrSpark.length < 7) {
+        mrrSpark.unshift(0);
+      }
+    }
 
     return [
       {
         label: "Monthly active users",
-        value:
-          totalMessages > 1000
-            ? formatNumber(Math.round(totalMessages * 3.2))
-            : "79,410",
-        change: 12.8,
-        comparison: "vs previous 30 days",
-        spark: [22, 28, 26, 34, 38, 36, 45],
+        value: realMau > 0 ? formatNumber(realMau) : "0",
+        change: messageChange,
+        comparison: realMau > 0 ? "Active telemetry accounts" : "No active telemetry logged",
+        spark: messageSpark,
       },
       {
         label: "Active customers",
-        value: activeCount > 0 ? formatNumber(activeCount) : "1,284",
-        change: 8.4,
-        comparison: `${totalCustomers} total accounts`,
-        spark: [20, 23, 29, 31, 30, 37, 42],
+        value: activeCount > 0 ? formatNumber(activeCount) : "0",
+        change: customerChange,
+        comparison: `${formatNumber(totalCustomers)} total accounts`,
+        spark: activeCustomerSpark,
       },
       {
         label: "Messages sent",
-        value: totalMessages > 1000 ? formatNumber(totalMessages) : "24.8M",
-        change: 18.6,
-        comparison: "vs previous 30 days",
-        spark: [18, 25, 22, 32, 35, 43, 47],
+        value: totalMessages > 0 ? formatNumber(totalMessages) : "0",
+        change: messageChange,
+        comparison: hasDeliveredMessages
+          ? "Outbound delivery volume"
+          : configuredVolume > 0
+          ? "Configured plan volume"
+          : "No message volume recorded",
+        spark: messageSpark,
       },
       {
         label: "Monthly recurring revenue",
-        value: totalMrr > 0 ? formatCurrency(totalMrr) : "₹2.48Cr",
-        change: 6.2,
-        comparison: "Active customer plans",
-        spark: [24, 25, 28, 29, 34, 34, 38],
+        value: totalMrr > 0 ? formatCurrency(totalMrr) : "₹0",
+        change: 0,
+        comparison: `${activeSubs.length} active ${activeSubs.length === 1 ? "plan" : "plans"}`,
+        spark: mrrSpark,
       },
       {
         label: "Trial conversion",
         value: `${conversionRate}%`,
-        change: 3.1,
-        comparison: `${activeCount} converted accounts`,
-        spark: [28, 27, 30, 32, 34, 36, 39],
+        change: 0,
+        comparison: `${formatNumber(activeCount)} converted of ${formatNumber(totalCustomers)}`,
+        spark: activeCustomerSpark,
       },
       {
         label: "Renewals due",
-        value: renewalsDue > 0 ? String(renewalsDue) : "48",
-        change: -9.3,
-        comparison: "Upcoming 30 days",
-        spark: [42, 39, 41, 34, 36, 31, 28],
+        value: String(renewalsDue),
+        change: 0,
+        comparison: renewalsDue > 0 ? "Upcoming in 30 days" : "None in next 30 days",
+        spark: [0, 0, 0, 0, 0, 0, 0],
       },
     ];
+  }, [customers, usageData, subscriptions]);
+
+  // 2. USER ACTIVITY TIME SERIES (DAU / WAU / MAU)
+  const userActivityData = useMemo(() => {
+    const cutoff = getDateCutoffMs(dateRange);
+    const records = (usageData?.usageMetrics || []).filter((m) => {
+      if (m.metric_value === null) return false;
+      const t = new Date(m.recorded_at || m.created_at || 0).getTime();
+      return t >= cutoff;
+    });
+
+    if (records.length === 0) return [];
+
+    const dayMap = new Map<string, { customers: Set<string>; valueSum: number }>();
+    records.forEach((r) => {
+      const d = new Date(r.recorded_at || r.created_at || 0);
+      const key = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      if (!dayMap.has(key)) {
+        dayMap.set(key, { customers: new Set(), valueSum: 0 });
+      }
+      const entry = dayMap.get(key)!;
+      if (r.customer_id) entry.customers.add(r.customer_id);
+      entry.valueSum += Number(r.metric_value) || 0;
+    });
+
+    let cumulative = 0;
+    return Array.from(dayMap.entries()).map(([date, data]) => {
+      cumulative += data.customers.size;
+      return {
+        date,
+        dau: data.customers.size || data.valueSum,
+        wau: Math.min(cumulative, (data.customers.size || data.valueSum) * 3),
+        mau: cumulative || data.valueSum,
+      };
+    });
+  }, [usageData, dateRange]);
+
+  const activityStats = useMemo(() => {
+    if (userActivityData.length === 0) {
+      return { dau: 0, wau: 0, mau: 0 };
+    }
+    const latest = userActivityData[userActivityData.length - 1];
+    return {
+      dau: latest.dau,
+      wau: latest.wau,
+      mau: latest.mau,
+    };
+  }, [userActivityData]);
+
+  // 3. COMMUNICATION VOLUME TIME SERIES & TOP CHANNEL CALLOUT
+  const communicationVolumeData = useMemo(() => {
+    const cutoff = getDateCutoffMs(dateRange);
+    const records = (usageData?.usageMetrics || []).filter((m) => {
+      if (m.metric_value === null) return false;
+      const t = new Date(m.recorded_at || m.created_at || 0).getTime();
+      return t >= cutoff;
+    });
+
+    if (records.length === 0) return [];
+
+    const dayMap = new Map<string, { whatsapp: number; email: number; sms: number; broadcasts: number }>();
+    records.forEach((r) => {
+      const d = new Date(r.recorded_at || r.created_at || 0);
+      const key = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      if (!dayMap.has(key)) {
+        dayMap.set(key, { whatsapp: 0, email: 0, sms: 0, broadcasts: 0 });
+      }
+      const entry = dayMap.get(key)!;
+      const name = (r.metric_name || "").toLowerCase();
+      const val = Number(r.metric_value) || 0;
+      if (name.includes("whatsapp")) entry.whatsapp += val;
+      else if (name.includes("email")) entry.email += val;
+      else if (name.includes("sms")) entry.sms += val;
+      else if (name.includes("broadcast")) entry.broadcasts += val;
+      else entry.whatsapp += val;
+    });
+
+    return Array.from(dayMap.entries()).map(([date, channels]) => ({
+      date,
+      ...channels,
+    }));
+  }, [usageData, dateRange]);
+
+  const channelBreakdown = useMemo(() => {
+    const mb = usageData?.metricBreakdown || {};
+    const whatsapp = Number(mb.whatsapp?.totalValue) || 0;
+    const email = Number(mb.email?.totalValue) || 0;
+    const sms = Number(mb.sms?.totalValue) || 0;
+    const broadcasts = Number(mb.broadcasts?.totalValue) || 0;
+
+    const list = [
+      { name: "WhatsApp", volume: whatsapp },
+      { name: "Email", volume: email },
+      { name: "SMS", volume: sms },
+      { name: "Broadcasts", volume: broadcasts },
+    ].sort((a, b) => b.volume - a.volume);
+
+    const total = whatsapp + email + sms + broadcasts;
+    const top = list[0];
+    const topPct = total > 0 ? ((top.volume / total) * 100).toFixed(1) : "0.0";
+
+    return {
+      whatsapp,
+      email,
+      sms,
+      broadcasts,
+      total,
+      topChannelName: top.volume > 0 ? top.name : "None",
+      topChannelShare: topPct,
+      topChannelVolume: top.volume,
+    };
+  }, [usageData]);
+
+  // 4. CONVERSATIONS BREAKDOWN
+  const conversationStats = useMemo(() => {
+    const rawConversations = Number(usageData?.metricBreakdown?.conversations?.totalValue) || 0;
+
+    const newTickets = tickets.filter((t) => {
+      const s = (t.status || "").toLowerCase();
+      return s === "new" || s === "open" || s === "unassigned";
+    }).length;
+
+    const activeTickets = tickets.filter((t) => {
+      const s = (t.status || "").toLowerCase();
+      return s === "active" || s === "in_progress" || s === "in progress" || s === "pending";
+    }).length;
+
+    const resolvedTickets = tickets.filter((t) => {
+      const s = (t.status || "").toLowerCase();
+      return s === "resolved" || s === "closed";
+    }).length;
+
+    const escalatedTickets = tickets.filter((t) => {
+      const s = (t.status || "").toLowerCase();
+      return s === "escalated" || s === "urgent";
+    }).length;
+
+    const ticketSum = newTickets + activeTickets + resolvedTickets + escalatedTickets;
+    const total = Math.max(rawConversations, ticketSum);
+
+    const series = [
+      { name: "New", value: newTickets, color: "var(--chart-1)" },
+      { name: "Active", value: activeTickets, color: "var(--chart-2)" },
+      { name: "Resolved", value: resolvedTickets, color: "var(--chart-3)" },
+      { name: "Escalated", value: escalatedTickets, color: "var(--chart-5)" },
+    ];
+
+    return { total, series };
+  }, [usageData, tickets]);
+
+  // 5. CUSTOMER GROWTH COHORT TIME SERIES
+  const customerGrowthData = useMemo(() => {
+    const dates = customers
+      .map((c) => (c.activatedAt && c.activatedAt !== "—" ? new Date(c.activatedAt).getTime() : 0))
+      .filter((t) => t > 0)
+      .sort((a, b) => a - b);
+
+    if (dates.length < 2) return [];
+
+    const min = dates[0];
+    const max = dates[dates.length - 1];
+    const step = (max - min) / 6;
+    if (step <= 0) return [];
+
+    return Array.from({ length: 7 }, (_, i) => {
+      const bucketEnd = min + step * (i + 1);
+      const bucketStart = min + step * i;
+      // "New" is directly supported by user registration created_at timestamps
+      const newInBucket = dates.filter((t) => t >= bucketStart && t < bucketEnd).length;
+
+      const dateLabel = new Date(bucketEnd).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      return {
+        date: dateLabel,
+        new: newInBucket,
+        // "Activated", "Churned", and "Renewed" are not directly supported by the existing database/API fields.
+        // The database does not record activation event timestamps, historical churn logs, or renewal events.
+        // Set to honest 0 rather than guessing or deriving from creation or update timestamps.
+        activated: 0,
+        churned: 0,
+        renewed: 0,
+      };
+    });
   }, [customers]);
+
+  const growthStatus = useMemo(() => {
+    const active = customers.filter((c) => c.status === "Active").length;
+    const churned = subscriptions.filter((s) => {
+      const st = (s.status || "").toLowerCase();
+      return st === "cancelled" || st === "expired";
+    }).length;
+    if (active === 0) return "Trial";
+    if (churned > active * 0.2) return "At Risk";
+    return "Healthy";
+  }, [customers, subscriptions]);
+
+  // 6. TOP CUSTOMERS BY REAL USAGE & SUBSCRIPTIONS
+  const enrichedTopCustomers = useMemo(() => {
+    const planCustomerMap = new Map<string, number>();
+    (usageData?.planMetrics?.customers || []).forEach((p) => {
+      if (p.userId) planCustomerMap.set(p.userId.toLowerCase(), Number(p.messageVolume) || 0);
+      if (p.userName) planCustomerMap.set(p.userName.toLowerCase(), Number(p.messageVolume) || 0);
+    });
+
+    const telemetryUsageMap = new Map<string, { messages: number; broadcasts: number; conversations: number; other: number }>();
+    (usageData?.usageMetrics || []).forEach((m) => {
+      if (!m.customer_id) return;
+      const cid = m.customer_id.toLowerCase();
+      if (!telemetryUsageMap.has(cid)) {
+        telemetryUsageMap.set(cid, { messages: 0, broadcasts: 0, conversations: 0, other: 0 });
+      }
+      const entry = telemetryUsageMap.get(cid)!;
+      const name = (m.metric_name || "").toLowerCase();
+      const val = Number(m.metric_value) || 0;
+      if (name.includes("message") || name.includes("whatsapp")) entry.messages += val;
+      else if (name.includes("broadcast")) entry.broadcasts += val;
+      else if (name.includes("conversation")) entry.conversations += val;
+      else entry.other += val;
+    });
+
+    const subMrrMap = new Map<string, number>();
+    subscriptions.forEach((s) => {
+      const amt = Number(s.amount) || Number(s.mrr) || 0;
+      if (s.customer_id) subMrrMap.set(s.customer_id.toLowerCase(), (subMrrMap.get(s.customer_id.toLowerCase()) || 0) + amt);
+      if (s.customer_name) subMrrMap.set(s.customer_name.toLowerCase(), (subMrrMap.get(s.customer_name.toLowerCase()) || 0) + amt);
+      if (s.customer) subMrrMap.set(s.customer.toLowerCase(), (subMrrMap.get(s.customer.toLowerCase()) || 0) + amt);
+    });
+
+    return [...customers]
+      .map((c) => {
+        const cid = c.id.toLowerCase();
+        const cname = c.company.toLowerCase();
+        const planVol = planCustomerMap.get(cid) || planCustomerMap.get(cname) || 0;
+        const tel = telemetryUsageMap.get(cid) || telemetryUsageMap.get(cname) || {
+          messages: 0,
+          broadcasts: 0,
+          conversations: 0,
+          other: 0,
+        };
+        const mrr = subMrrMap.get(cid) || subMrrMap.get(cname) || (c.subscription?.mrr || 0);
+
+        const messages = tel.messages > 0 ? tel.messages : planVol;
+        const broadcasts = tel.broadcasts;
+        const conversations = tel.conversations;
+        const totalUsage = messages + broadcasts + conversations + tel.other;
+
+        return {
+          ...c,
+          realUsage: {
+            messages,
+            broadcasts,
+            conversations,
+            totalUsage,
+          },
+          realMrr: mrr,
+        };
+      })
+      .sort((a, b) => b.realUsage.totalUsage - a.realUsage.totalUsage)
+      .slice(0, 6);
+  }, [customers, usageData, subscriptions]);
+
+  // 7. RECENT OPERATIONAL ACTIVITIES FILTERED BY DATE RANGE
+  const filteredActivities = useMemo(() => {
+    const cutoff = getDateCutoffMs(dateRange);
+    return activities.filter((a) => {
+      const d = a.created_at || a.activity_date;
+      if (!d) return true;
+      return new Date(d).getTime() >= cutoff;
+    });
+  }, [activities, dateRange]);
+
+  const isLoading =
+    isRefreshing ||
+    analyticsLoading ||
+    usageLoading ||
+    subsLoading ||
+    activitiesLoading ||
+    ticketsLoading;
 
   const handleRefresh = async () => {
     try {
-      await reloadAnalytics();
+      await Promise.all([
+        reloadAnalytics(),
+        reloadUsage(),
+        loadSubscriptions(),
+        loadActivities(),
+        loadTickets(),
+      ]);
       refreshData();
       toast.success("Refreshing analytics data");
     } catch {
@@ -179,12 +672,13 @@ export default function AnalyticsStudio() {
   const exportReport = () => {
     downloadCsv(
       "superblock-analytics.csv",
-      topCustomers.map((customer) => ({
+      enrichedTopCustomers.map((customer) => ({
         Customer: customer.company,
-        Messages: customer.usage.messages,
-        Broadcasts: customer.usage.broadcasts,
-        Conversations: customer.usage.conversations,
-        Revenue: customer.subscription.mrr,
+        Messages: customer.realUsage.messages,
+        Broadcasts: customer.realUsage.broadcasts,
+        Conversations: customer.realUsage.conversations,
+        "Total Usage": customer.realUsage.totalUsage,
+        Revenue: customer.realMrr,
       }))
     );
     toast.success("Analytics exported", {
@@ -200,8 +694,13 @@ export default function AnalyticsStudio() {
         description="Customer growth, communication volume, engagement, and revenue signals across the Superblock platform."
         actions={
           <span className="data-freshness">
-            <span className="size-2 rounded-full bg-emerald-500" />
-            Live sync active
+            <span
+              className={cn(
+                "size-2 rounded-full",
+                isLoading ? "bg-amber-500 animate-pulse" : "bg-emerald-500"
+              )}
+            />
+            {isLoading ? "Syncing..." : "Live sync active"}
           </span>
         }
       />
@@ -211,7 +710,7 @@ export default function AnalyticsStudio() {
           setDateRange={setDateRange}
           onExport={exportReport}
           onRefresh={handleRefresh}
-          loading={isRefreshing || analyticsLoading}
+          loading={isLoading}
         />
       </div>
 
@@ -221,7 +720,7 @@ export default function AnalyticsStudio() {
             key={kpi.label}
             {...kpi}
             icon={metricIcons[index]}
-            loading={isRefreshing || analyticsLoading}
+            loading={isLoading}
           />
         ))}
       </section>
@@ -254,20 +753,26 @@ export default function AnalyticsStudio() {
               <EmptyState onReset={() => setChartState("data")} />
             ) : chartState === "error" ? (
               <ErrorState onRetry={() => setChartState("data")} />
+            ) : userActivityData.length === 0 ? (
+              <EmptyState
+                title="No user activity logged"
+                description="No daily, weekly, or monthly telemetry events recorded for this period."
+                onReset={() => setDateRange("Last 30 days")}
+              />
             ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart
-                  data={analyticsSeries}
+                  data={userActivityData}
                   margin={{ top: 10, right: 5, left: -12, bottom: 0 }}
                 >
                   <defs>
                     <linearGradient id="dau" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0" stopColor="var(--chart-1)" stopOpacity={0.24} />
-                      <stop offset="1" stopColor="var(--chart-1)" stopOpacity={0} />
+                      <stop offset="0%" stopColor="var(--chart-1)" stopOpacity={0.24} />
+                      <stop offset="100%" stopColor="var(--chart-1)" stopOpacity={0} />
                     </linearGradient>
                     <linearGradient id="wau" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0" stopColor="var(--chart-2)" stopOpacity={0.14} />
-                      <stop offset="1" stopColor="var(--chart-2)" stopOpacity={0} />
+                      <stop offset="0%" stopColor="var(--chart-2)" stopOpacity={0.14} />
+                      <stop offset="100%" stopColor="var(--chart-2)" stopOpacity={0} />
                     </linearGradient>
                   </defs>
                   <CartesianGrid
@@ -330,19 +835,25 @@ export default function AnalyticsStudio() {
           </div>
           <div className="mt-2 grid grid-cols-3 divide-x rounded-lg bg-muted/35 px-2 py-2.5 text-center">
             <div>
-              <div className="font-tabular text-sm font-semibold">10,482</div>
+              <div className="font-tabular text-sm font-semibold">
+                {formatNumber(activityStats.dau)}
+              </div>
               <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
                 DAU
               </div>
             </div>
             <div>
-              <div className="font-tabular text-sm font-semibold">35,640</div>
+              <div className="font-tabular text-sm font-semibold">
+                {formatNumber(activityStats.wau)}
+              </div>
               <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
                 WAU
               </div>
             </div>
             <div>
-              <div className="font-tabular text-sm font-semibold">79,410</div>
+              <div className="font-tabular text-sm font-semibold">
+                {formatNumber(activityStats.mau)}
+              </div>
               <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
                 MAU
               </div>
@@ -353,7 +864,7 @@ export default function AnalyticsStudio() {
         <div className="panel p-4">
           <SectionHeader
             title="Communication volume"
-            description="Millions of outbound messages by channel"
+            description="Outbound messages by channel"
             action={
               <Button variant="ghost" size="icon" className="size-7">
                 <MoreHorizontal className="size-4" />
@@ -361,62 +872,76 @@ export default function AnalyticsStudio() {
             }
           />
           <div className="chart-height">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart
-                data={analyticsSeries}
-                margin={{ top: 10, right: 4, left: -24, bottom: 0 }}
-                barGap={1}
-              >
-                <CartesianGrid
-                  strokeDasharray="3 3"
-                  vertical={false}
-                  stroke="var(--chart-grid)"
-                />
-                <XAxis
-                  dataKey="date"
-                  tickLine={false}
-                  axisLine={false}
-                  tick={{ fontSize: 9, fill: "var(--muted-foreground)" }}
-                  dy={8}
-                />
-                <YAxis
-                  tickLine={false}
-                  axisLine={false}
-                  tick={{ fontSize: 9, fill: "var(--muted-foreground)" }}
-                />
-                <RechartsTooltip content={<ChartTooltip suffix="k" />} />
-                <Legend
-                  iconType="circle"
-                  iconSize={6}
-                  wrapperStyle={{ fontSize: "10px", paddingTop: "10px" }}
-                />
-                <Bar
-                  dataKey="whatsapp"
-                  name="WhatsApp"
-                  stackId="a"
-                  fill={channelColors.WhatsApp}
-                  radius={[0, 0, 2, 2]}
-                />
-                <Bar dataKey="email" name="Email" stackId="a" fill={channelColors.Email} />
-                <Bar dataKey="sms" name="SMS" stackId="a" fill={channelColors.SMS} />
-                <Bar
-                  dataKey="broadcasts"
-                  name="Broadcasts"
-                  stackId="a"
-                  fill={channelColors.Broadcasts}
-                  radius={[2, 2, 0, 0]}
-                />
-              </BarChart>
-            </ResponsiveContainer>
+            {communicationVolumeData.length === 0 ? (
+              <EmptyState
+                title="No communication volume logged"
+                description="Outbound message telemetry has not been recorded for this period."
+                onReset={() => setDateRange("Last 30 days")}
+              />
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
+                  data={communicationVolumeData}
+                  margin={{ top: 10, right: 4, left: -24, bottom: 0 }}
+                  barGap={1}
+                >
+                  <CartesianGrid
+                    strokeDasharray="3 3"
+                    vertical={false}
+                    stroke="var(--chart-grid)"
+                  />
+                  <XAxis
+                    dataKey="date"
+                    tickLine={false}
+                    axisLine={false}
+                    tick={{ fontSize: 9, fill: "var(--muted-foreground)" }}
+                    dy={8}
+                  />
+                  <YAxis
+                    tickLine={false}
+                    axisLine={false}
+                    tick={{ fontSize: 9, fill: "var(--muted-foreground)" }}
+                  />
+                  <RechartsTooltip content={<ChartTooltip suffix="k" />} />
+                  <Legend
+                    iconType="circle"
+                    iconSize={6}
+                    wrapperStyle={{ fontSize: "10px", paddingTop: "10px" }}
+                  />
+                  <Bar
+                    dataKey="whatsapp"
+                    name="WhatsApp"
+                    stackId="a"
+                    fill={channelColors.WhatsApp}
+                    radius={[0, 0, 2, 2]}
+                  />
+                  <Bar dataKey="email" name="Email" stackId="a" fill={channelColors.Email} />
+                  <Bar dataKey="sms" name="SMS" stackId="a" fill={channelColors.SMS} />
+                  <Bar
+                    dataKey="broadcasts"
+                    name="Broadcasts"
+                    stackId="a"
+                    fill={channelColors.Broadcasts}
+                    radius={[2, 2, 0, 0]}
+                  />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
           </div>
           <div className="mt-2 flex items-center justify-between rounded-lg border border-primary/20 bg-primary/5 px-3 py-2">
             <div>
               <div className="text-[11px] text-muted-foreground">
-                Fastest-growing channel
+                Top communication channel
               </div>
-              <div className="mt-0.5 text-xs font-semibold">WhatsApp · +24.6%</div>
+              <div className="mt-0.5 text-xs font-semibold">
+                {channelBreakdown.topChannelVolume > 0
+                  ? `${channelBreakdown.topChannelName} · ${channelBreakdown.topChannelShare}% of volume`
+                  : "No channel volume recorded"}
+              </div>
             </div>
-            <span className="font-tabular text-sm font-semibold">16.2M</span>
+            <span className="font-tabular text-sm font-semibold">
+              {formatNumber(channelBreakdown.topChannelVolume)}
+            </span>
           </div>
         </div>
       </section>
@@ -425,31 +950,49 @@ export default function AnalyticsStudio() {
         <div className="panel p-4 lg:col-span-1">
           <SectionHeader
             title="Conversations"
-            description="59,000 conversations this period"
+            description={`${formatNumber(conversationStats.total)} conversations this period`}
           />
           <div className="relative mx-auto h-[205px] max-w-[300px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={conversationSeries}
-                  dataKey="value"
-                  nameKey="name"
-                  innerRadius={62}
-                  outerRadius={84}
-                  paddingAngle={2}
-                  stroke="none"
-                >
-                  {conversationSeries.map((item) => (
-                    <Cell key={item.name} fill={item.color} />
-                  ))}
-                </Pie>
-                <RechartsTooltip content={<ChartTooltip />} />
-              </PieChart>
-            </ResponsiveContainer>
+            {conversationStats.total === 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={[{ name: "No conversations", value: 1 }]}
+                    dataKey="value"
+                    nameKey="name"
+                    innerRadius={62}
+                    outerRadius={84}
+                    paddingAngle={0}
+                    stroke="none"
+                  >
+                    <Cell fill="var(--muted)" fillOpacity={0.35} />
+                  </Pie>
+                </PieChart>
+              </ResponsiveContainer>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={conversationStats.series.filter((item) => item.value > 0)}
+                    dataKey="value"
+                    nameKey="name"
+                    innerRadius={62}
+                    outerRadius={84}
+                    paddingAngle={2}
+                    stroke="none"
+                  >
+                    {conversationStats.series.map((item) => (
+                      <Cell key={item.name} fill={item.color} />
+                    ))}
+                  </Pie>
+                  <RechartsTooltip content={<ChartTooltip />} />
+                </PieChart>
+              </ResponsiveContainer>
+            )}
             <div className="pointer-events-none absolute inset-0 grid place-items-center text-center">
               <div>
                 <div className="font-tabular text-xl font-semibold tracking-[-0.04em]">
-                  59.0K
+                  {formatNumber(conversationStats.total)}
                 </div>
                 <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
                   Total
@@ -458,7 +1001,7 @@ export default function AnalyticsStudio() {
             </div>
           </div>
           <div className="grid grid-cols-2 gap-2">
-            {conversationSeries.map((item) => (
+            {conversationStats.series.map((item) => (
               <div
                 key={item.name}
                 className="flex items-center justify-between rounded-md bg-muted/35 px-2.5 py-2 text-[11px]"
@@ -480,81 +1023,85 @@ export default function AnalyticsStudio() {
         <div className="panel p-4 lg:col-span-2">
           <SectionHeader
             title="Customer growth"
-            description="Activation, churn, and net expansion performance"
-            action={<StatusBadge status="Healthy" />}
+            description="Activation, churn, and renewal cohorts"
+            action={<StatusBadge status={growthStatus} />}
           />
           <div className="h-[270px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart
-                data={analyticsSeries.map((row, index) => ({
-                  ...row,
-                  new: 62 + index * 5 + (index % 2) * 12,
-                  activated: 48 + index * 4,
-                  churned: 12 + (index % 3) * 5,
-                  renewed: 31 + index * 3,
-                }))}
-                margin={{ top: 10, right: 6, left: -18, bottom: 0 }}
-              >
-                <CartesianGrid
-                  strokeDasharray="3 3"
-                  vertical={false}
-                  stroke="var(--chart-grid)"
+            {customerGrowthData.length === 0 ? (
+              <div className="h-full flex items-center justify-center">
+                <EmptyState
+                  title="No customer growth history"
+                  description="Insufficient registration cohorts recorded for trend visualization."
+                  onReset={() => setDateRange("Last 30 days")}
                 />
-                <XAxis
-                  dataKey="date"
-                  tickLine={false}
-                  axisLine={false}
-                  tick={{ fontSize: 10, fill: "var(--muted-foreground)" }}
-                  dy={8}
-                />
-                <YAxis
-                  tickLine={false}
-                  axisLine={false}
-                  tick={{ fontSize: 10, fill: "var(--muted-foreground)" }}
-                />
-                <RechartsTooltip content={<ChartTooltip />} />
-                <Area
-                  dataKey="new"
-                  name="New"
-                  type="monotone"
-                  stroke="var(--chart-1)"
-                  fill="var(--chart-1)"
-                  fillOpacity={0.08}
-                  strokeWidth={2}
-                  dot={false}
-                />
-                <Line
-                  dataKey="activated"
-                  name="Activated"
-                  type="monotone"
-                  stroke="var(--positive)"
-                  strokeWidth={2}
-                  dot={false}
-                />
-                <Line
-                  dataKey="churned"
-                  name="Churned"
-                  type="monotone"
-                  stroke="var(--negative)"
-                  strokeWidth={1.6}
-                  strokeDasharray="4 4"
-                  dot={false}
-                />
-                <Line
-                  dataKey="renewed"
-                  name="Renewed"
-                  type="monotone"
-                  stroke="var(--chart-4)"
-                  strokeWidth={1.6}
-                  dot={false}
-                />
-                <Legend
-                  iconType="circle"
-                  iconSize={6}
-                  wrapperStyle={{ fontSize: "10px" }}
-                />
-              </AreaChart>
-            </ResponsiveContainer>
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart
+                  data={customerGrowthData}
+                  margin={{ top: 10, right: 6, left: -18, bottom: 0 }}
+                >
+                  <CartesianGrid
+                    strokeDasharray="3 3"
+                    vertical={false}
+                    stroke="var(--chart-grid)"
+                  />
+                  <XAxis
+                    dataKey="date"
+                    tickLine={false}
+                    axisLine={false}
+                    tick={{ fontSize: 10, fill: "var(--muted-foreground)" }}
+                    dy={8}
+                  />
+                  <YAxis
+                    tickLine={false}
+                    axisLine={false}
+                    tick={{ fontSize: 10, fill: "var(--muted-foreground)" }}
+                  />
+                  <RechartsTooltip content={<ChartTooltip />} />
+                  <Area
+                    dataKey="new"
+                    name="New"
+                    type="monotone"
+                    stroke="var(--chart-1)"
+                    fill="var(--chart-1)"
+                    fillOpacity={0.08}
+                    strokeWidth={2}
+                    dot={false}
+                  />
+                  <Line
+                    dataKey="activated"
+                    name="Activated"
+                    type="monotone"
+                    stroke="var(--positive)"
+                    strokeWidth={2}
+                    dot={false}
+                  />
+                  <Line
+                    dataKey="churned"
+                    name="Churned"
+                    type="monotone"
+                    stroke="var(--negative)"
+                    strokeWidth={1.6}
+                    strokeDasharray="4 4"
+                    dot={false}
+                  />
+                  <Line
+                    dataKey="renewed"
+                    name="Renewed"
+                    type="monotone"
+                    stroke="var(--chart-4)"
+                    strokeWidth={1.6}
+                    dot={false}
+                  />
+                  <Legend
+                    iconType="circle"
+                    iconSize={6}
+                    wrapperStyle={{ fontSize: "10px" }}
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            )}
           </div>
         </div>
       </section>
@@ -588,40 +1135,44 @@ export default function AnalyticsStudio() {
                 </tr>
               </thead>
               <tbody>
-                {topCustomers.map((customer) => (
-                  <tr key={customer.id}>
-                    <td>
-                      <Link
-                        href={`/customers/${customer.id}`}
-                        className="font-medium hover:underline"
-                      >
-                        {customer.company}
-                      </Link>
-                      <div className="font-mono text-[10px] text-muted-foreground">
-                        {customer.id}
-                      </div>
-                    </td>
-                    <td className="text-right font-tabular">
-                      {formatNumber(customer.usage.messages)}
-                    </td>
-                    <td className="text-right font-tabular">
-                      {customer.usage.broadcasts}
-                    </td>
-                    <td className="text-right font-tabular">
-                      {formatNumber(customer.usage.conversations)}
-                    </td>
-                    <td className="text-right font-tabular">
-                      {formatNumber(
-                        customer.usage.messages +
-                          customer.usage.email +
-                          customer.usage.sms
-                      )}
-                    </td>
-                    <td className="text-right font-tabular font-medium">
-                      {formatCurrency(customer.subscription.mrr)}
+                {enrichedTopCustomers.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="py-8 text-center text-xs text-muted-foreground">
+                      No customer usage records available
                     </td>
                   </tr>
-                ))}
+                ) : (
+                  enrichedTopCustomers.map((customer) => (
+                    <tr key={customer.id}>
+                      <td>
+                        <Link
+                          href={`/customers/${customer.id}`}
+                          className="font-medium hover:underline"
+                        >
+                          {customer.company}
+                        </Link>
+                        <div className="font-mono text-[10px] text-muted-foreground">
+                          {customer.id}
+                        </div>
+                      </td>
+                      <td className="text-right font-tabular">
+                        {formatNumber(customer.realUsage.messages)}
+                      </td>
+                      <td className="text-right font-tabular">
+                        {formatNumber(customer.realUsage.broadcasts)}
+                      </td>
+                      <td className="text-right font-tabular">
+                        {formatNumber(customer.realUsage.conversations)}
+                      </td>
+                      <td className="text-right font-tabular">
+                        {formatNumber(customer.realUsage.totalUsage)}
+                      </td>
+                      <td className="text-right font-tabular font-medium">
+                        {formatCurrency(customer.realMrr)}
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
@@ -638,27 +1189,56 @@ export default function AnalyticsStudio() {
               }
             />
           </div>
-          <div className="divide-y divide-border/60">
-            {recentActivity.map((item) => (
-              <div
-                key={`${item.time}-${item.customer}`}
-                className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-muted/30"
-              >
-                <div className="w-10 font-mono text-[10px] text-muted-foreground">
-                  {item.time}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-xs font-medium">
-                    {item.activity}
+          {filteredActivities.length === 0 ? (
+            <div className="p-8 text-center">
+              <EmptyState
+                title="No recent activity"
+                description="No platform or customer operational events recorded for this period."
+                onReset={() => setDateRange("Last 30 days")}
+              />
+            </div>
+          ) : (
+            <div className="divide-y divide-border/60">
+              {filteredActivities.slice(0, 6).map((item) => {
+                const timeStr =
+                  item.time ||
+                  (item.created_at
+                    ? new Date(item.created_at).toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })
+                    : "—");
+                const actTitle = item.title || item.action_text || item.type || "Activity";
+                const customerName = item.customerName || item.clientUserId || "SuperBlock Customer";
+                const channelText = item.channel || item.actor || "System";
+                const detailText =
+                  item.detail && item.detail !== "—"
+                    ? item.detail
+                    : item.description || item.message || "Completed";
+                const status = item.status || "Completed";
+
+                return (
+                  <div
+                    key={item.id || `${timeStr}-${customerName}`}
+                    className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-muted/30"
+                  >
+                    <div className="w-12 font-mono text-[10px] text-muted-foreground">
+                      {timeStr}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-xs font-medium">
+                        {actTitle}
+                      </div>
+                      <div className="truncate text-[11px] text-muted-foreground">
+                        {customerName} · {channelText} · {detailText}
+                      </div>
+                    </div>
+                    <StatusBadge status={status} dot={false} />
                   </div>
-                  <div className="truncate text-[11px] text-muted-foreground">
-                    {item.customer} · {item.channel} · {item.volume}
-                  </div>
-                </div>
-                <StatusBadge status={item.status} dot={false} />
-              </div>
-            ))}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </section>
     </AppShell>
@@ -722,7 +1302,7 @@ function ChartTooltip({
             {item.name}
           </span>
           <span className="font-tabular font-semibold">
-            {item.value.toLocaleString("en-IN")}
+            {(Number(item.value) || 0).toLocaleString("en-IN")}
             {suffix}
           </span>
         </div>
