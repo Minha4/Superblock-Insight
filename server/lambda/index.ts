@@ -41,12 +41,14 @@ import { updatePlanHandler } from "./plans/updatePlan";
 import { deletePlanHandler } from "./plans/deletePlan";
 import { getUsageMetricsHandler } from "./usageMetrics/getUsageMetrics";
 import { createUsageMetricHandler } from "./usageMetrics/createUsageMetric";
+import { getDynamoMessagesUsageHandler } from "./usageMetrics/getDynamoMessagesUsage";
 import { getActivitiesHandler } from "./activities/getActivities";
 import { createActivityHandler } from "./activities/createActivity";
 import { getCredentialsHandler } from "./credentials/getCredentials";
 
 export * from "./types";
 export * from "./db";
+export * from "./dynamodb";
 export { getCredentialsHandler } from "./credentials/getCredentials";
 export { getNotesHandler } from "./notes/getNotes";
 export { createNoteHandler } from "./notes/createNote";
@@ -91,6 +93,7 @@ export { updatePlanHandler } from "./plans/updatePlan";
 export { deletePlanHandler } from "./plans/deletePlan";
 export { getUsageMetricsHandler } from "./usageMetrics/getUsageMetrics";
 export { createUsageMetricHandler } from "./usageMetrics/createUsageMetric";
+export { getDynamoMessagesUsageHandler } from "./usageMetrics/getDynamoMessagesUsage";
 export { getActivitiesHandler } from "./activities/getActivities";
 export { createActivityHandler } from "./activities/createActivity";
 
@@ -168,6 +171,7 @@ export async function handler(
             "customerOfferings",
             "invoices",
             "usageMetrics",
+            "dynamoMessagesUsage",
             "activities",
           ],
         }),
@@ -453,21 +457,55 @@ export async function handler(
       return await deletePlanHandler(event);
     }
 
-    // 12. Usage Metrics API
+    // 12. Usage Metrics API (Source of truth: AWS DynamoDB Messages table)
     if (
       (method === "GET" &&
         (rawPath.endsWith("/usage-metrics") ||
           rawPath.includes("/usage-metrics/") ||
           rawPath.endsWith("/usage_metrics") ||
-          rawPath.includes("/usage_metrics/"))) ||
-      (method === "GET" && (action === "usage_metrics" || action === "usage-metrics" || action === "usagemetrics"))
+          rawPath.includes("/usage_metrics/") ||
+          rawPath.endsWith("/usage-metrics/messages") ||
+          rawPath.includes("/usage-metrics/messages/") ||
+          rawPath.endsWith("/messages-usage") ||
+          rawPath.includes("/messages-usage/") ||
+          rawPath.endsWith("/dynamo-messages") ||
+          rawPath.includes("/dynamo-messages/"))) ||
+      (method === "GET" &&
+        (action === "usage_metrics" ||
+          action === "usage-metrics" ||
+          action === "usagemetrics" ||
+          action === "messages_usage" ||
+          action === "messages-usage" ||
+          action === "messages" ||
+          action === "dynamo_messages" ||
+          action === "dynamodb_messages"))
+    ) {
+      return await getDynamoMessagesUsageHandler(event);
+    }
+
+    // 12b. Legacy Usage Metrics API (PostgreSQL public.usage_metrics)
+    if (
+      (method === "GET" &&
+        (rawPath.endsWith("/legacy-usage-metrics") ||
+          rawPath.includes("/legacy-usage-metrics/"))) ||
+      (method === "GET" &&
+        (action === "legacy_usage" ||
+          action === "legacy-usage" ||
+          action === "legacy_usage_metrics" ||
+          action === "legacy-usage-metrics"))
     ) {
       return await getUsageMetricsHandler(event);
     }
     if (
       (method === "POST" &&
-        (rawPath.endsWith("/usage-metrics") || rawPath.endsWith("/usage_metrics"))) ||
-      (method === "POST" && (action === "usage_metrics" || action === "usage-metrics" || action === "usagemetrics"))
+        (rawPath.endsWith("/usage-metrics") ||
+          rawPath.endsWith("/usage_metrics") ||
+          rawPath.endsWith("/legacy-usage-metrics"))) ||
+      (method === "POST" &&
+        (action === "usage_metrics" ||
+          action === "usage-metrics" ||
+          action === "usagemetrics" ||
+          action === "legacy_usage"))
     ) {
       return await createUsageMetricHandler(event);
     }

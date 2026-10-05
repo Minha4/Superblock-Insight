@@ -887,3 +887,125 @@ export interface CustomerAnalyticsApiResponse {
   users: ApiCustomerRecord[];
   error?: string;
 }
+
+/**
+ * AWS DynamoDB Messages Table Record Schema
+ * Source of truth for real WhatsApp message usage.
+ */
+export interface DynamoDbMessageRecord {
+  message_id: string;
+  "client#user_id"?: string;
+  client_user_id?: string;
+  user_id?: string;
+  direction?: string;
+  message_text?: string;
+  message_type?: string;
+  messageStatus?: string;
+  metaUserId?: string;
+  timestamp?: number;
+  status_updated_at?: number;
+  statusObj?: string;
+  media_url?: string;
+  [key: string]: any;
+}
+
+export interface DynamoMessageDirectionBreakdown {
+  inbound: number;
+  outbound: number;
+  other: number;
+}
+
+export interface DynamoMessageDailyCount {
+  date: string;
+  inbound: number;
+  outbound: number;
+  total: number;
+}
+
+export interface DynamoMessageRecentItem {
+  message_id: string;
+  direction?: string;
+  message_type?: string;
+  messageStatus?: string;
+  timestamp?: number;
+  formattedTime?: string;
+  snippet?: string;
+  hasMedia: boolean;
+  media_url?: string;
+}
+
+export interface DynamoMessageMetrics {
+  totalMessages: number;
+  inboundMessages: number;
+  outboundMessages: number;
+  mediaMessages: number;
+  directionBreakdown: DynamoMessageDirectionBreakdown;
+  statusBreakdown: Record<string, number>;
+  typeBreakdown: Record<string, number>;
+  firstMessageAt: string | null;
+  lastMessageAt: string | null;
+  firstMessageTimestamp: number | null;
+  lastMessageTimestamp: number | null;
+  dailyBreakdown: DynamoMessageDailyCount[];
+  recentMessages: DynamoMessageRecentItem[];
+  // Authoritative empty indicators for future metrics not found in Messages table
+  planAllowance: null;
+  quotaRemaining: null;
+  conversationsCount: null;
+  broadcastsCount: null;
+  costEstimate: null;
+  note: string;
+}
+
+export interface GetDynamoMessagesUsageResponse {
+  success: boolean;
+  source: "dynamodb_messages";
+  table: string;
+  queryMode: "query_index" | "scan_filter";
+  indexUsed: string | null;
+  scope: "customer" | "platform";
+  customerId: string;
+  matchedIdentifier?: string;
+  queriedAt: string;
+  // Compatibility with existing Analytics Studio frontend usage API:
+  count: number;
+  usageMetrics: Array<{
+    id: string;
+    customer_id: string;
+    metric_name: string;
+    metric_value: number;
+    metric_unit: string;
+    recorded_at: string | null;
+    created_at: string | null;
+  }>;
+  metricBreakdown: Record<
+    string,
+    {
+      metricName: string;
+      count: number;
+      totalValue: number;
+      avgValue: number | null;
+      maxValue: number | null;
+      unit: string;
+      earliestRecordedAt: string | null;
+      latestRecordedAt: string | null;
+    }
+  >;
+  planMetrics?: {
+    totalConfiguredMessageVolume: number | null;
+    configuredCustomersCount: number;
+    customers?: Array<{
+      userId: string;
+      userName: string | null;
+      plan: string | null;
+      messageVolume: number;
+    }>;
+    note: string;
+  };
+  contactsSummary?: {
+    totalContacts: number | null;
+  };
+  metrics: DynamoMessageMetrics;
+  warning?: string;
+  error?: string;
+}

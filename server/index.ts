@@ -13,6 +13,7 @@ import {
   getCustomerOperations,
   invalidateAnalyticsCache,
 } from "./analyticsDb";
+import { query } from "./lambda/db";
 import { createNoteHandler } from "./lambda/notes/createNote";
 import { getNotesHandler } from "./lambda/notes/getNotes";
 import { deleteNoteHandler } from "./lambda/notes/deleteNote";
@@ -42,6 +43,7 @@ import { createTeamMemberHandler } from "./lambda/teamMembers/createTeamMember";
 import { updateTeamMemberHandler } from "./lambda/teamMembers/updateTeamMember";
 import { deleteTeamMemberHandler } from "./lambda/teamMembers/deleteTeamMember";
 import { getUsageMetricsHandler } from "./lambda/usageMetrics/getUsageMetrics";
+import { getDynamoMessagesUsageHandler } from "./lambda/usageMetrics/getDynamoMessagesUsage";
 import { getCredentialsHandler } from "./lambda/credentials/getCredentials";
 import { getCustomerOfferingsHandler } from "./lambda/customerOfferings/getCustomerOfferings";
 import { createCustomerOfferingHandler } from "./lambda/customerOfferings/createCustomerOffering";
@@ -746,31 +748,6 @@ app.post("/api/gateway-login", async (req, res) => {
     }
   });
 
-  let fallbackSettings = {
-    profile: {
-      fullName: "",
-      displayName: "",
-      email: "",
-      phone: "",
-      timezone: "utc",
-    },
-    notifications: {
-      renewalAlerts: true,
-      billingExceptions: true,
-      usageAnomalies: true,
-      productUpdates: false,
-    },
-    security: {
-      twoFactorEnabled: false,
-      loginAlerts: false,
-      sessionTimeoutHours: "8",
-      activeSessions: [] as { id: string; device: string; location: string; lastActive: string; isCurrent: boolean }[],
-    },
-    apiKeys: [] as { id: string; name: string; keyPrefix: string; createdAt: string; expiresAt: string }[],
-    workspaceName: "Superblock Workspace",
-  };
-
-  const customerOverrides = new Map<string, any>();
   const subscriptionCustomerNames = new Map<string, string>();
   for (const [key, info] of Object.entries(customerContactsSummary)) {
     if (info.customerName) {
@@ -1243,42 +1220,359 @@ app.post("/api/gateway-login", async (req, res) => {
   app.delete("/api/team/:id", handleDeleteTeamMember);
   app.delete("/api/team", handleDeleteTeamMember);
 
-  // Settings endpoints (GET, POST)
-  app.get("/api/settings", (_req, res) => {
-    return res.json({ success: true, settings: fallbackSettings });
-  });
-
-  app.post("/api/settings", (req, res) => {
-    const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
-    fallbackSettings = {
-      ...fallbackSettings,
-      ...body,
-      profile: { ...fallbackSettings.profile, ...(body.profile || {}) },
-      notifications: { ...fallbackSettings.notifications, ...(body.notifications || {}) },
-      security: { ...fallbackSettings.security, ...(body.security || {}) },
-    };
-    return res.json({ success: true, settings: fallbackSettings });
-  });
-
-  // Customer Profile Update endpoint
-  app.put("/api/customers/:id", (req, res) => {
-    const id = req.params.id;
-    const updates = req.body || {};
-    customerOverrides.set(id, { ...(customerOverrides.get(id) || {}), ...updates, updatedAt: new Date().toISOString() });
-    return res.json({ success: true, customerId: id, updates: customerOverrides.get(id) });
-  });
-
-  app.get("/api/customers/:id/overrides", (req, res) => {
-    const id = req.params.id;
-    return res.json({ success: true, customerId: id, overrides: customerOverrides.get(id) || null });
-  });
-
-  // Usage Metrics endpoint
-  app.get("/api/usage-metrics", async (req, res) => {
+  // Customer Metadata endpoints connected to Supabase public.customer_metadata
+  app.get("/api/customer-metadata", async (_req, res) => {
     try {
-      const result = await getUsageMetricsHandler({
+      const sql = `
+        SELECT
+          cm.customer_id,
+          cm.company_name,
+          cm.industry,
+          cm.plan,
+          cm.owner_id,
+          cm.tags,
+          cm.created_at,
+          cm.updated_at,
+          COALESCE(tm.name, tm2.name, cm.owner_id) AS resolved_owner_name
+        FROM public.customer_metadata cm
+        LEFT JOIN public.team_members tm ON (cm.owner_id = tm.id::text)
+        LEFT JOIN public.team_members tm2 ON (cm.owner_id = tm2.team_user_id)
+        ORDER BY cm.updated_at DESC;
+      `;
+      const result = await query(sql);
+      return res.json({ success: true, count: result.rows.length, metadata: result.rows });
+    } catch (error: any) {
+      console.error("Error fetching customer metadata:", error);
+      return res.status(500).json({ success: false, error: error?.message || "Failed to fetch customer metadata", metadata: [] });
+    }
+  });
+
+  app.get("/api/customer-metadata/:id", async (req, res) => {
+    try {
+      const id = req.params.id;
+      const sql = `
+        SELECT
+          cm.customer_id,
+          cm.company_name,
+          cm.industry,
+          cm.plan,
+          cm.owner_id,
+          cm.tags,
+          cm.created_at,
+          cm.updated_at,
+          COALESCE(tm.name, tm2.name, cm.owner_id) AS resolved_owner_name
+        FROM public.customer_metadata cm
+        LEFT JOIN public.team_members tm ON (cm.owner_id = tm.id::text)
+        LEFT JOIN public.team_members tm2 ON (cm.owner_id = tm2.team_user_id)
+        WHERE cm.customer_id = $1
+        LIMIT 1;
+      `;
+      const result = await query(sql, [id]);
+      return res.json({ success: true, customerId: id, metadata: result.rows[0] || null });
+    } catch (error: any) {
+      console.error("Error fetching customer metadata for", req.params.id, error);
+      return res.status(500).json({ success: false, error: error?.message || "Failed to fetch customer metadata" });
+    }
+  });
+
+  const handleUpdateCustomerMetadata = async (req: express.Request, res: express.Response) => {
+    try {
+      const id = req.params.id;
+      const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body || {};
+      const companyName = body.company_name || body.company || body.name || null;
+      const industry = body.industry || body.description || null;
+      const plan = body.plan || null;
+      const ownerId = body.owner_id || body.ownerId || null;
+      const tags = Array.isArray(body.tags) ? body.tags : null;
+
+      const sql = `
+        INSERT INTO public.customer_metadata (
+          customer_id,
+          company_name,
+          industry,
+          plan,
+          owner_id,
+          tags,
+          updated_at
+        )
+        VALUES (
+          $1,
+          $2,
+          $3,
+          $4,
+          $5,
+          COALESCE($6::text[], '{}'::text[]),
+          NOW()
+        )
+        ON CONFLICT (customer_id) DO UPDATE SET
+          company_name = COALESCE(EXCLUDED.company_name, customer_metadata.company_name),
+          industry = COALESCE(EXCLUDED.industry, customer_metadata.industry),
+          plan = COALESCE(EXCLUDED.plan, customer_metadata.plan),
+          owner_id = COALESCE(EXCLUDED.owner_id, customer_metadata.owner_id),
+          tags = CASE WHEN $6::text[] IS NOT NULL THEN $6::text[] ELSE customer_metadata.tags END,
+          updated_at = NOW()
+        RETURNING *;
+      `;
+      const result = await query(sql, [id, companyName, industry, plan, ownerId, tags]);
+      invalidateAnalyticsCache();
+      return res.json({ success: true, customerId: id, metadata: result.rows[0] });
+    } catch (error: any) {
+      console.error("Error updating customer metadata for", req.params.id, error);
+      return res.status(500).json({ success: false, error: error?.message || "Failed to update customer metadata" });
+    }
+  };
+
+  app.put("/api/customer-metadata/:id", handleUpdateCustomerMetadata);
+  app.put("/api/customers/:id", handleUpdateCustomerMetadata);
+
+  app.get("/api/customers/:id/overrides", async (req, res) => {
+    try {
+      const id = req.params.id;
+      const sql = `
+        SELECT
+          cm.*,
+          COALESCE(tm.name, tm2.name, cm.owner_id) AS resolved_owner_name
+        FROM public.customer_metadata cm
+        LEFT JOIN public.team_members tm ON (cm.owner_id = tm.id::text)
+        LEFT JOIN public.team_members tm2 ON (cm.owner_id = tm2.team_user_id)
+        WHERE cm.customer_id = $1
+        LIMIT 1;
+      `;
+      const result = await query(sql, [id]);
+      return res.json({ success: true, customerId: id, overrides: result.rows[0] || null });
+    } catch (error: any) {
+      return res.status(500).json({ success: false, error: error?.message || "Failed to get overrides" });
+    }
+  });
+
+  app.post("/api/customer-metadata/batch-owner", async (req, res) => {
+    try {
+      const { customerIds, ownerId } = req.body || {};
+      if (!Array.isArray(customerIds) || customerIds.length === 0) {
+        return res.status(400).json({ success: false, error: "customerIds array is required" });
+      }
+      if (!ownerId) {
+        return res.status(400).json({ success: false, error: "ownerId is required" });
+      }
+
+      const sql = `
+        INSERT INTO public.customer_metadata (customer_id, owner_id, updated_at)
+        SELECT unnest($1::text[]), $2, NOW()
+        ON CONFLICT (customer_id) DO UPDATE SET
+          owner_id = EXCLUDED.owner_id,
+          updated_at = NOW()
+        RETURNING *;
+      `;
+      const result = await query(sql, [customerIds, ownerId]);
+      invalidateAnalyticsCache();
+      return res.json({ success: true, count: result.rows.length, metadata: result.rows });
+    } catch (error: any) {
+      console.error("Error batch assigning owner:", error);
+      return res.status(500).json({ success: false, error: error?.message || "Failed to assign owner" });
+    }
+  });
+
+  app.post("/api/customer-metadata/batch-tag", async (req, res) => {
+    try {
+      const { customerIds, tag } = req.body || {};
+      if (!Array.isArray(customerIds) || customerIds.length === 0) {
+        return res.status(400).json({ success: false, error: "customerIds array is required" });
+      }
+      const cleanTag = (tag || "").trim();
+      if (!cleanTag) {
+        return res.status(400).json({ success: false, error: "tag is required" });
+      }
+
+      const sql = `
+        INSERT INTO public.customer_metadata (customer_id, tags, updated_at)
+        SELECT unnest($1::text[]), ARRAY[$2::text], NOW()
+        ON CONFLICT (customer_id) DO UPDATE SET
+          tags = (
+            SELECT ARRAY(
+              SELECT DISTINCT elem
+              FROM unnest(array_append(customer_metadata.tags, $2::text)) AS elem
+              WHERE elem IS NOT NULL AND elem != ''
+            )
+          ),
+          updated_at = NOW()
+        RETURNING *;
+      `;
+      const result = await query(sql, [customerIds, cleanTag]);
+      invalidateAnalyticsCache();
+      return res.json({ success: true, count: result.rows.length, metadata: result.rows });
+    } catch (error: any) {
+      console.error("Error batch adding tag:", error);
+      return res.status(500).json({ success: false, error: error?.message || "Failed to add tag" });
+    }
+  });
+
+  // Settings endpoints (GET, POST) connected to Supabase public.user_settings
+  app.get("/api/settings", async (req, res) => {
+    try {
+      const userId = (req.query.userId as string) || (req.headers["x-user-id"] as string) || "default_user";
+      const sql = `
+        SELECT * FROM public.user_settings
+        WHERE user_id = $1
+        LIMIT 1;
+      `;
+      const result = await query(sql, [userId]);
+      if (result.rows.length > 0) {
+        const row = result.rows[0];
+        return res.json({
+          success: true,
+          settings: {
+            profile: {
+              fullName: "",
+              displayName: "",
+              email: "",
+              phone: "",
+              timezone: row.timezone || "utc",
+            },
+            notifications: {
+              renewalAlerts: row.renewal_alerts ?? true,
+              billingExceptions: row.billing_exceptions ?? true,
+              usageAnomalies: row.usage_anomalies ?? true,
+              productUpdates: row.product_updates ?? false,
+            },
+            security: {
+              twoFactorEnabled: false,
+              loginAlerts: false,
+              sessionTimeoutHours: "8",
+              activeSessions: [],
+            },
+            apiKeys: [],
+            workspaceName: row.workspace_name || "Superblock Workspace",
+          },
+        });
+      }
+
+      return res.json({
+        success: true,
+        settings: {
+          profile: {
+            fullName: "",
+            displayName: "",
+            email: "",
+            phone: "",
+            timezone: "utc",
+          },
+          notifications: {
+            renewalAlerts: true,
+            billingExceptions: true,
+            usageAnomalies: true,
+            productUpdates: false,
+          },
+          security: {
+            twoFactorEnabled: false,
+            loginAlerts: false,
+            sessionTimeoutHours: "8",
+            activeSessions: [],
+          },
+          apiKeys: [],
+          workspaceName: "Superblock Workspace",
+        },
+      });
+    } catch (error: any) {
+      console.error("Error in GET /api/settings:", error);
+      return res.status(500).json({ success: false, error: error?.message || "Failed to load settings" });
+    }
+  });
+
+  app.post("/api/settings", async (req, res) => {
+    try {
+      const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body || {};
+      const userId = (req.query.userId as string) || (req.headers["x-user-id"] as string) || body.userId || "default_user";
+
+      const notifications = body.notifications || {};
+      const profile = body.profile || {};
+      const workspaceName = body.workspaceName || body.workspace_name;
+      const timezone = profile.timezone || body.timezone;
+
+      const renewalAlerts = notifications.renewalAlerts ?? notifications.renewal_alerts;
+      const billingExceptions = notifications.billingExceptions ?? notifications.billing_exceptions;
+      const usageAnomalies = notifications.usageAnomalies ?? notifications.usage_anomalies;
+      const productUpdates = notifications.productUpdates ?? notifications.product_updates;
+
+      const sql = `
+        INSERT INTO public.user_settings (
+          user_id,
+          renewal_alerts,
+          billing_exceptions,
+          usage_anomalies,
+          product_updates,
+          timezone,
+          workspace_name,
+          updated_at
+        )
+        VALUES (
+          $1,
+          COALESCE($2, TRUE),
+          COALESCE($3, TRUE),
+          COALESCE($4, TRUE),
+          COALESCE($5, FALSE),
+          COALESCE($6, 'utc'),
+          COALESCE($7, 'Superblock Workspace'),
+          NOW()
+        )
+        ON CONFLICT (user_id) DO UPDATE SET
+          renewal_alerts = COALESCE(EXCLUDED.renewal_alerts, user_settings.renewal_alerts),
+          billing_exceptions = COALESCE(EXCLUDED.billing_exceptions, user_settings.billing_exceptions),
+          usage_anomalies = COALESCE(EXCLUDED.usage_anomalies, user_settings.usage_anomalies),
+          product_updates = COALESCE(EXCLUDED.product_updates, user_settings.product_updates),
+          timezone = COALESCE(EXCLUDED.timezone, user_settings.timezone),
+          workspace_name = COALESCE(EXCLUDED.workspace_name, user_settings.workspace_name),
+          updated_at = NOW()
+        RETURNING *;
+      `;
+      const result = await query(sql, [
+        userId,
+        renewalAlerts !== undefined ? renewalAlerts : null,
+        billingExceptions !== undefined ? billingExceptions : null,
+        usageAnomalies !== undefined ? usageAnomalies : null,
+        productUpdates !== undefined ? productUpdates : null,
+        timezone || null,
+        workspaceName || null,
+      ]);
+
+      const row = result.rows[0];
+      return res.json({
+        success: true,
+        settings: {
+          profile: {
+            fullName: profile.fullName || "",
+            displayName: profile.displayName || "",
+            email: profile.email || "",
+            phone: profile.phone || "",
+            timezone: row.timezone || "utc",
+          },
+          notifications: {
+            renewalAlerts: row.renewal_alerts,
+            billingExceptions: row.billing_exceptions,
+            usageAnomalies: row.usage_anomalies,
+            productUpdates: row.product_updates,
+          },
+          security: {
+            twoFactorEnabled: false,
+            loginAlerts: false,
+            sessionTimeoutHours: "8",
+            activeSessions: [],
+          },
+          apiKeys: [],
+          workspaceName: row.workspace_name,
+        },
+      });
+    } catch (error: any) {
+      console.error("Error in POST /api/settings:", error);
+      return res.status(500).json({ success: false, error: error?.message || "Failed to save settings" });
+    }
+  });
+
+  // Usage Metrics endpoint - Real WhatsApp message usage from AWS DynamoDB Messages table
+  app.get(["/api/usage-metrics", "/api/usage-metrics/messages", "/api/messages-usage"], async (req, res) => {
+    try {
+      const result = await getDynamoMessagesUsageHandler({
         httpMethod: "GET",
-        path: "/usage-metrics",
+        path: req.path || "/usage-metrics",
         headers: req.headers as Record<string, string | undefined>,
         queryStringParameters: req.query as Record<string, string | undefined>,
       });
@@ -1290,10 +1584,36 @@ app.post("/api/gateway-login", async (req, res) => {
       }
       return res.status(result.statusCode).json(responseData);
     } catch (error: any) {
-      console.error("Error fetching usage metrics:", error);
+      console.error("Error fetching DynamoDB messages usage:", error);
       return res.status(500).json({
         success: false,
-        error: error?.message || "Failed to fetch usage metrics",
+        source: "dynamodb_messages",
+        error: error?.message || "Failed to fetch DynamoDB messages usage",
+      });
+    }
+  });
+
+  // Legacy Usage Metrics endpoint (PostgreSQL / Supabase platform summaries)
+  app.get("/api/legacy-usage-metrics", async (req, res) => {
+    try {
+      const result = await getUsageMetricsHandler({
+        httpMethod: "GET",
+        path: "/legacy-usage-metrics",
+        headers: req.headers as Record<string, string | undefined>,
+        queryStringParameters: req.query as Record<string, string | undefined>,
+      });
+      let responseData: any;
+      try {
+        responseData = JSON.parse(result.body);
+      } catch {
+        responseData = { message: result.body };
+      }
+      return res.status(result.statusCode).json(responseData);
+    } catch (error: any) {
+      console.error("Error fetching legacy usage metrics:", error);
+      return res.status(500).json({
+        success: false,
+        error: error?.message || "Failed to fetch legacy usage metrics",
         usageMetrics: [],
       });
     }
