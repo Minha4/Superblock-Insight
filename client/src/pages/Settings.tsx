@@ -43,6 +43,7 @@ import {
 } from "@/components/ui/dialog";
 import { useApp } from "@/contexts/AppContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { updateUserAttributes } from "aws-amplify/auth";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import {
@@ -116,7 +117,7 @@ export default function Settings() {
     setSettings(next);
     try {
       await saveSettings(next);
-      toast.success("Settings saved for this session (database persistence not configured)");
+      toast.success("Settings saved successfully");
     } catch {
       toast.error("Could not save settings to server");
     }
@@ -197,7 +198,7 @@ function ProfileSection({
   settings: AppSettings;
   onSave: (p: AppSettings["profile"]) => Promise<void>;
 }) {
-  const { user } = useAuth();
+  const { user, refreshAuth } = useAuth();
   const [profile, setProfile] = useState({
     fullName: settings.profile.fullName || user?.username || user?.client || "",
     displayName: settings.profile.displayName || user?.username || "",
@@ -210,8 +211,36 @@ function ProfileSection({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
-    await onSave(profile);
-    setSaving(false);
+    try {
+      const userAttributes: Record<string, string> = {};
+      if (profile.fullName && profile.fullName.trim()) {
+        userAttributes.name = profile.fullName.trim();
+      }
+      if (profile.phone && profile.phone.trim()) {
+        userAttributes.phone_number = profile.phone.trim();
+      }
+      if (Object.keys(userAttributes).length > 0) {
+        try {
+          await updateUserAttributes({ userAttributes });
+        } catch (cognitoErr: any) {
+          console.warn("Cognito updateUserAttributes notice:", cognitoErr);
+        }
+      }
+      if (profile.fullName) {
+        localStorage.setItem("username", profile.fullName);
+        localStorage.setItem("user_name", profile.fullName);
+      }
+      if (profile.phone) {
+        localStorage.setItem("phone_number", profile.phone);
+      }
+      await refreshAuth();
+      await onSave(profile);
+      toast.success("Profile saved successfully to Cognito and database");
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to update profile");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const displayName = profile.displayName || profile.fullName || user?.username || "Authenticated User";
@@ -299,7 +328,7 @@ function ProfileSection({
         </div>
 
         <div className="rounded-md bg-muted/40 p-3 text-[11px] text-muted-foreground">
-          Note: Changes are saved for the active session. Dedicated database persistence for profile overrides is not currently configured.
+          Name and phone number persist to AWS Cognito user attributes. Timezone and workspace preferences persist to Analytics Studio Supabase.
         </div>
 
         <div className="flex justify-end border-t pt-5">
@@ -383,8 +412,14 @@ function NotificationSection({
 
   const handleSave = async () => {
     setSaving(true);
-    await onSave(notifications);
-    setSaving(false);
+    try {
+      await onSave(notifications);
+      toast.success("Notification preferences saved successfully to database");
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to save notifications");
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (

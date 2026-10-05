@@ -13,6 +13,7 @@ import { createCustomerNote } from "@/lib/api/notes";
 import { createCustomerInvoice } from "@/lib/api/billing";
 import { createCustomerOffering } from "@/lib/api/offerings";
 import { createCustomer } from "@/lib/api/customerAnalytics";
+import { updateCustomerMetadata } from "@/lib/api/customerMetadata";
 import { createProduct } from "@/lib/api/products";
 
 export interface QuickFormDefaultValues {
@@ -32,15 +33,28 @@ export function QuickFormDialog({
   type = "general",
   defaultValues,
   customerId,
+  open: controlledOpen,
+  onOpenChange: controlledOnOpenChange,
 }: {
-  trigger: ReactNode;
+  trigger?: ReactNode;
   title: string;
   description: string;
   type?: "general" | "note" | "meeting" | "customer" | "product" | "invoice" | "offering";
   defaultValues?: QuickFormDefaultValues;
   customerId?: string;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
+  const isControlled = controlledOpen !== undefined;
+  const open = isControlled ? controlledOpen : internalOpen;
+  const setOpen = (val: boolean) => {
+    if (isControlled) {
+      controlledOnOpenChange?.(val);
+    } else {
+      setInternalOpen(val);
+    }
+  };
   const [saving, setSaving] = useState(false);
   const [formName, setFormName] = useState(defaultValues?.name || "");
   const [formContent, setFormContent] = useState(defaultValues?.description || "");
@@ -282,6 +296,47 @@ export function QuickFormDialog({
         toast.error("Company name is required");
         return;
       }
+
+      const isEdit = title.toLowerCase().includes("edit");
+      const targetCustomerId =
+        customerId ||
+        defaultValues?.customerId ||
+        (typeof window !== "undefined"
+          ? window.location.pathname.match(/\/customers\/([^/?#]+)/)?.[1]
+          : undefined);
+
+      if (isEdit) {
+        if (!targetCustomerId) {
+          toast.error("Customer ID is required to update customer details");
+          return;
+        }
+        setSaving(true);
+        try {
+          const updated = await updateCustomerMetadata(targetCustomerId, {
+            company_name: formName.trim(),
+            industry: formContent.trim() || undefined,
+            plan: customerPlan,
+          });
+          toast.success("Customer updated successfully", {
+            description: "Changes saved to database.",
+          });
+          setOpen(false);
+          if (typeof window !== "undefined") {
+            window.dispatchEvent(
+              new CustomEvent("customer-operations-updated", {
+                detail: { customerId: targetCustomerId, metadata: updated },
+              })
+            );
+          }
+        } catch (err: any) {
+          console.error("Error updating customer:", err);
+          toast.error(err?.message || "Failed to update customer details");
+        } finally {
+          setSaving(false);
+        }
+        return;
+      }
+
       setSaving(true);
       try {
         await createCustomer({
@@ -339,7 +394,7 @@ export function QuickFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>{trigger}</DialogTrigger>
+      {trigger && <DialogTrigger asChild>{trigger}</DialogTrigger>}
       <DialogContent className="sm:max-w-[520px]">
         <DialogHeader><DialogTitle>{title}</DialogTitle><DialogDescription>{description}</DialogDescription></DialogHeader>
         <div className="grid gap-4 py-1">

@@ -115,12 +115,30 @@ export function saveLocalSettings(settings: AppSettings): void {
 }
 
 export async function getSettings(): Promise<AppSettings> {
+  const userId =
+    typeof window !== "undefined"
+      ? localStorage.getItem("userId") || localStorage.getItem("clientUserId") || "default_user"
+      : "default_user";
   try {
-    const res = await fetch("/api/settings");
+    const res = await fetch(`/api/settings?userId=${encodeURIComponent(userId)}`);
     if (res.ok) {
       const data = await res.json();
       if (data?.success && data?.settings) {
-        const merged = { ...defaultSettings, ...data.settings };
+        const local = loadLocalSettings();
+        const merged: AppSettings = {
+          ...defaultSettings,
+          ...local,
+          ...data.settings,
+          notifications: {
+            ...defaultSettings.notifications,
+            ...data.settings.notifications,
+          },
+          profile: {
+            ...defaultSettings.profile,
+            ...local.profile,
+            ...(data.settings.profile || {}),
+          },
+        };
         saveLocalSettings(merged);
         return merged;
       }
@@ -133,6 +151,11 @@ export async function getSettings(): Promise<AppSettings> {
 
 export async function saveSettings(updates: Partial<AppSettings>): Promise<AppSettings> {
   const current = loadLocalSettings();
+  const userId =
+    typeof window !== "undefined"
+      ? localStorage.getItem("userId") || localStorage.getItem("clientUserId") || "default_user"
+      : "default_user";
+
   const merged: AppSettings = {
     ...current,
     ...updates,
@@ -143,10 +166,10 @@ export async function saveSettings(updates: Partial<AppSettings>): Promise<AppSe
   };
 
   try {
-    await fetch("/api/settings", {
+    await fetch(`/api/settings?userId=${encodeURIComponent(userId)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(merged),
+      body: JSON.stringify({ ...merged, userId }),
     });
   } catch (err) {
     console.warn("Backend POST /api/settings failed (DB offline), persisting locally:", err);

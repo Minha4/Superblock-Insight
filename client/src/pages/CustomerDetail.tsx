@@ -42,6 +42,7 @@ import {
   downloadCsv,
 } from "@/components/dashboard-ui";
 import { CopyButton, QuickFormDialog } from "@/components/ActionDialogs";
+import { getCustomerMetadata, type CustomerMetadataRecord } from "@/lib/api/customerMetadata";
 import { Button } from "@/components/ui/button";
 import {
   getCustomerMeetings,
@@ -258,6 +259,7 @@ export default function CustomerDetail() {
   }
 
   const [realOperations, setRealOperations] = useState<CustomerOperationsPayload | null>(null);
+  const [customerMetadata, setCustomerMetadata] = useState<CustomerMetadataRecord | null>(null);
   const [operationsRefreshKey, setOperationsRefreshKey] = useState(0);
 
   useEffect(() => {
@@ -274,6 +276,7 @@ export default function CustomerDetail() {
     let cancelled = false;
     if (!rawCustomer?.id) {
       setRealOperations(null);
+      setCustomerMetadata(null);
       return;
     }
 
@@ -306,6 +309,16 @@ export default function CustomerDetail() {
           }
         } catch (notesErr) {
           console.warn("Could not fetch notes from notes API:", notesErr);
+        }
+
+        // Fetch persistent metadata from Supabase public.customer_metadata
+        try {
+          const meta = await getCustomerMetadata(customerId);
+          if (!cancelled && meta) {
+            setCustomerMetadata(meta);
+          }
+        } catch (metaErr) {
+          console.warn("Could not fetch customer metadata:", metaErr);
         }
 
         if (!cancelled) {
@@ -434,6 +447,23 @@ export default function CustomerDetail() {
       if (profile.role || profile.user_role) {
         owner.name = (profile.role || profile.user_role || owner.name).trim();
         owner.initials = getInitials(owner.name);
+      }
+    }
+
+    if (customerMetadata) {
+      if (customerMetadata.company_name) {
+        company = customerMetadata.company_name;
+      }
+      if (customerMetadata.industry) {
+        industry = customerMetadata.industry;
+      }
+      if (customerMetadata.plan) {
+        plan = customerMetadata.plan;
+      }
+      if (customerMetadata.resolved_owner_name || customerMetadata.owner_id) {
+        const resolvedName = customerMetadata.resolved_owner_name || customerMetadata.owner_id!;
+        owner.name = resolvedName;
+        owner.initials = getInitials(resolvedName);
       }
     }
 
@@ -606,7 +636,7 @@ export default function CustomerDetail() {
       invoices,
       meetings: [],
     };
-  }, [rawCustomer, profile, realOperations, usageData]);
+  }, [rawCustomer, profile, realOperations, usageData, customerMetadata]);
 
   const exportCustomer = () => {
     if (!customer) return;
@@ -754,15 +784,17 @@ export default function CustomerDetail() {
           />
           <QuickFormDialog
             type="customer"
+            customerId={customer.id}
             title="Edit customer"
             description={`Update details and configuration for ${customer.company}.`}
             defaultValues={{
               name: customer.company,
               email: customer.contact.email !== "—" ? customer.contact.email : "",
-              plan: ["starter", "growth", "advanced"].includes(customer.plan.toLowerCase())
-                ? customer.plan.toLowerCase()
-                : "growth",
+              plan: ["starter", "growth", "advanced", "enterprise"].includes(customer.plan.toLowerCase())
+                ? customer.plan
+                : "Growth",
               description: customer.industry && customer.industry !== "—" ? customer.industry : "",
+              customerId: customer.id,
             }}
             trigger={
               <Button size="sm">

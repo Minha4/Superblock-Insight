@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { getCurrentUser, fetchAuthSession } from "aws-amplify/auth";
 import { type Customer, type CustomerStatus } from "@/types/customer";
 import { customerContactsSummary, getCustomerContactCount } from "@/data/customerContactsData";
+import { getAllCustomerMetadata, type CustomerMetadataRecord } from "./customerMetadata";
 
 export interface ApiCustomerRecord {
   user_id: string;
@@ -361,19 +362,47 @@ export async function createCustomer(_data: {
   );
 }
 
+let cachedMetadata: Record<string, CustomerMetadataRecord> = {};
+
 /**
  * React hook to access and manage customer data.
  * Always initializes with real Superblock customers immediately so navigation and feature testing
  * (Offerings, Notes, Meetings, Billing) work without delay or blank loading states.
+ * Merges persistent metadata (company, industry, plan, owner) from Supabase public.customer_metadata.
  */
 export function useCustomerAnalytics() {
-  const getMerged = useCallback((apiUsers: ApiCustomerRecord[] = cachedResponse?.users || []) => {
-    const base = [...defaultAllCustomers];
-    if (apiUsers && apiUsers.length > 0) {
-      return mergeCustomersWithRealData(apiUsers, base);
-    }
-    return base;
-  }, []);
+  const [metadataMap, setMetadataMap] = useState<Record<string, CustomerMetadataRecord>>(() => cachedMetadata);
+
+  const getMerged = useCallback(
+    (
+      apiUsers: ApiCustomerRecord[] = cachedResponse?.users || [],
+      metaMap: Record<string, CustomerMetadataRecord> = metadataMap
+    ) => {
+      const base = [...defaultAllCustomers];
+      const merged = apiUsers && apiUsers.length > 0 ? mergeCustomersWithRealData(apiUsers, base) : base;
+
+      if (!metaMap || Object.keys(metaMap).length === 0) {
+        return merged;
+      }
+
+      return merged.map((c) => {
+        const meta = metaMap[c.id];
+        if (!meta) return c;
+        const ownerName = meta.resolved_owner_name || meta.owner_id;
+        return {
+          ...c,
+          company: meta.company_name || c.company,
+          industry: meta.industry || c.industry,
+          plan: meta.plan || c.plan,
+          initials: meta.company_name ? getInitials(meta.company_name) : c.initials,
+          owner: ownerName
+            ? { name: ownerName, initials: getInitials(ownerName) }
+            : c.owner,
+        };
+      });
+    },
+    [metadataMap]
+  );
 
   const [customers, setCustomers] = useState<Customer[]>(() => getMerged());
   const [rawUsers, setRawUsers] = useState<ApiCustomerRecord[]>(() => cachedResponse?.users || []);
@@ -382,12 +411,17 @@ export function useCustomerAnalytics() {
 
   const loadData = useCallback(async (forceRefresh = false) => {
     try {
-      const data = await fetchCustomerAnalytics(forceRefresh);
+      const [data, meta] = await Promise.all([
+        fetchCustomerAnalytics(forceRefresh),
+        getAllCustomerMetadata(),
+      ]);
+      cachedMetadata = meta;
+      setMetadataMap(meta);
       if (data && Array.isArray(data.users) && data.users.length > 0) {
         setRawUsers(data.users);
-        setCustomers(getMerged(data.users));
+        setCustomers(getMerged(data.users, meta));
       } else {
-        setCustomers(getMerged());
+        setCustomers(getMerged([], meta));
       }
     } catch (err) {
       setCustomers(getMerged());
@@ -399,8 +433,15 @@ export function useCustomerAnalytics() {
   useEffect(() => {
     loadData();
 
-    const handleUpdate = () => {
-      setCustomers(getMerged());
+    const handleUpdate = async () => {
+      try {
+        const meta = await getAllCustomerMetadata();
+        cachedMetadata = meta;
+        setMetadataMap(meta);
+        setCustomers(getMerged(cachedResponse?.users || [], meta));
+      } catch {
+        setCustomers(getMerged());
+      }
     };
 
     if (typeof window !== "undefined") {

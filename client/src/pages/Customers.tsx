@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "wouter";
 import {
   AlertCircle,
@@ -23,6 +23,18 @@ import {
   downloadCsv,
 } from "@/components/dashboard-ui";
 import { QuickFormDialog } from "@/components/ActionDialogs";
+import { batchAssignOwner, batchAddTag } from "@/lib/api/customerMetadata";
+import { getTeamMembers, type TeamMemberItem } from "@/lib/api/team";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -72,6 +84,76 @@ export default function Customers() {
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
   const [visible, setVisible] = useState<Column[]>([...columns]);
   const [selected, setSelected] = useState<string[]>([]);
+  const [assignOwnerOpen, setAssignOwnerOpen] = useState(false);
+  const [addTagOpen, setAddTagOpen] = useState(false);
+  const [teamMembers, setTeamMembers] = useState<TeamMemberItem[]>([]);
+  const [selectedOwnerId, setSelectedOwnerId] = useState<string>("");
+  const [tagName, setTagName] = useState<string>("");
+  const [isSubmittingBatch, setIsSubmittingBatch] = useState(false);
+
+  useEffect(() => {
+    getTeamMembers()
+      .then((members) => {
+        if (Array.isArray(members)) {
+          setTeamMembers(members);
+          if (members.length > 0 && !selectedOwnerId) {
+            setSelectedOwnerId(members[0].id);
+          }
+        }
+      })
+      .catch((err) => console.warn("Failed to load team members for owner assignment:", err));
+  }, []);
+
+  const handleAssignOwner = async () => {
+    if (!selectedOwnerId) {
+      toast.error("Please select an owner");
+      return;
+    }
+    if (selected.length === 0) {
+      toast.error("No customers selected");
+      return;
+    }
+    setIsSubmittingBatch(true);
+    try {
+      const ownerObj = teamMembers.find((m) => m.id === selectedOwnerId || m.name === selectedOwnerId);
+      await batchAssignOwner(selected, selectedOwnerId);
+      toast.success(`Owner assigned to ${selected.length} customer(s)`, {
+        description: ownerObj ? `Assigned to ${ownerObj.name}` : undefined,
+      });
+      setAssignOwnerOpen(false);
+      setSelected([]);
+      refresh();
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to assign owner");
+    } finally {
+      setIsSubmittingBatch(false);
+    }
+  };
+
+  const handleAddTag = async () => {
+    const clean = tagName.trim();
+    if (!clean) {
+      toast.error("Please enter a tag name");
+      return;
+    }
+    if (selected.length === 0) {
+      toast.error("No customers selected");
+      return;
+    }
+    setIsSubmittingBatch(true);
+    try {
+      await batchAddTag(selected, clean);
+      toast.success(`Tag "${clean}" applied to ${selected.length} customer(s)`);
+      setAddTagOpen(false);
+      setTagName("");
+      setSelected([]);
+      refresh();
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to add tag");
+    } finally {
+      setIsSubmittingBatch(false);
+    }
+  };
 
   // Display only accounts with valid customer/business data
   const displayCustomers = useMemo(
@@ -328,7 +410,7 @@ export default function Customers() {
               variant="outline"
               size="sm"
               className="h-7 bg-card text-[11px]"
-              onClick={() => toast.success("Owner updated for selected customers")}
+              onClick={() => setAssignOwnerOpen(true)}
             >
               Assign owner
             </Button>
@@ -336,7 +418,7 @@ export default function Customers() {
               variant="outline"
               size="sm"
               className="h-7 bg-card text-[11px]"
-              onClick={() => toast.success("Tags applied")}
+              onClick={() => setAddTagOpen(true)}
             >
               Add tag
             </Button>
@@ -350,6 +432,85 @@ export default function Customers() {
             </Button>
           </div>
         )}
+
+        <Dialog open={assignOwnerOpen} onOpenChange={setAssignOwnerOpen}>
+          <DialogContent className="sm:max-w-[420px]">
+            <DialogHeader>
+              <DialogTitle>Assign account owner</DialogTitle>
+              <DialogDescription>
+                Assign a dedicated team member to manage {selected.length} selected customer account(s).
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-3 py-2">
+              <Label className="text-xs">Select team member</Label>
+              <Select value={selectedOwnerId} onValueChange={setSelectedOwnerId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Choose an owner…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {teamMembers.map((m) => (
+                    <SelectItem key={m.id} value={m.id}>
+                      {m.name} ({m.role || "Agent"})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setAssignOwnerOpen(false)}>
+                Cancel
+              </Button>
+              <Button onClick={handleAssignOwner} disabled={isSubmittingBatch || !selectedOwnerId}>
+                {isSubmittingBatch ? "Assigning…" : "Assign owner"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={addTagOpen} onOpenChange={setAddTagOpen}>
+          <DialogContent className="sm:max-w-[440px]">
+            <DialogHeader>
+              <DialogTitle>Add customer tag</DialogTitle>
+              <DialogDescription>
+                Apply a categorization tag across {selected.length} selected customer account(s).
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-3 py-2">
+              <Label className="text-xs">Tag name</Label>
+              <Input
+                placeholder="e.g. VIP, Enterprise, High-Touch"
+                value={tagName}
+                onChange={(e) => setTagName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    handleAddTag();
+                  }
+                }}
+              />
+              <div className="flex flex-wrap gap-1.5 pt-1">
+                {["VIP", "Enterprise", "High Touch", "Q4 Renewal", "Priority"].map((chip) => (
+                  <button
+                    key={chip}
+                    type="button"
+                    onClick={() => setTagName(chip)}
+                    className="rounded-md border bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+                  >
+                    +{chip}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setAddTagOpen(false)}>
+                Cancel
+              </Button>
+              <Button onClick={handleAddTag} disabled={isSubmittingBatch || !tagName.trim()}>
+                {isSubmittingBatch ? "Applying…" : "Add tag"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         <div className="overflow-x-auto max-h-[calc(100vh-270px)] min-h-[420px] overflow-y-auto subtle-scrollbar">
           <table className="data-table min-w-[1240px]">
@@ -573,6 +734,7 @@ function CustomerRow({
   selected: boolean;
   toggleSelected: () => void;
 }) {
+  const [editOpen, setEditOpen] = useState(false);
   return (
     <tr className={cn(selected && "bg-primary/[0.04]")}>
       <td>
@@ -700,7 +862,7 @@ function CustomerRow({
             <DropdownMenuItem asChild>
               <Link href={`/customers/${customer.id}`}>View customer</Link>
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => toast.success("Customer edit opened")}>
+            <DropdownMenuItem onSelect={() => setEditOpen(true)}>
               Edit customer
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => toast.success("Note added to customer")}>
@@ -715,6 +877,24 @@ function CustomerRow({
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+
+        <QuickFormDialog
+          type="customer"
+          open={editOpen}
+          onOpenChange={setEditOpen}
+          customerId={customer.id}
+          title="Edit customer"
+          description={`Update details and configuration for ${customer.company}.`}
+          defaultValues={{
+            name: customer.company,
+            email: customer.contact.email !== "—" ? customer.contact.email : "",
+            plan: ["starter", "growth", "advanced", "enterprise"].includes(customer.plan.toLowerCase())
+              ? customer.plan
+              : "Growth",
+            description: customer.industry && customer.industry !== "—" ? customer.industry : "",
+            customerId: customer.id,
+          }}
+        />
       </td>
     </tr>
   );
