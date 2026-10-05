@@ -56,7 +56,20 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { formatCurrency, formatNumber } from "@/data/mockData";
+
+function formatCurrency(value: number): string {
+  if (!value || isNaN(value)) return "₹0";
+  if (value >= 10000000) return `₹${(value / 10000000).toFixed(2)}Cr`;
+  if (value >= 100000) return `₹${(value / 100000).toFixed(1)}L`;
+  return `₹${value.toLocaleString("en-IN")}`;
+}
+
+function formatNumber(value: number): string {
+  if (!value || isNaN(value)) return "0";
+  if (value >= 1000000) return `${(value / 1000000).toFixed(1)}M`;
+  if (value >= 1000) return `${(value / 1000).toFixed(1)}K`;
+  return value.toLocaleString("en-IN");
+}
 import {
   getProducts,
   createProduct,
@@ -112,11 +125,11 @@ export function ProductsPlans() {
   const [editingPlan, setEditingPlan] = useState<PlanItem | null>(null);
   const [planForm, setPlanForm] = useState({
     name: "",
-    product: "Omnichannel Suite",
-    monthly: 2499,
-    annual: 25490,
-    limit: "Unlimited broadcasts",
-    features: 10,
+    product: "",
+    monthly: 0,
+    annual: 0,
+    limit: "Standard limits",
+    features: 8,
     status: "Active" as PlanItem["status"],
   });
 
@@ -223,10 +236,10 @@ export function ProductsPlans() {
     setEditingPlan(null);
     setPlanForm({
       name: "",
-      product: productsList[0]?.name || "Omnichannel Suite",
-      monthly: 1999,
-      annual: 20390,
-      limit: "10k broadcasts",
+      product: productsList[0]?.name || "",
+      monthly: 0,
+      annual: 0,
+      limit: "Standard limits",
       features: 8,
       status: "Active",
     });
@@ -328,57 +341,68 @@ export function ProductsPlans() {
           <Loader2 className="size-6 animate-spin text-muted-foreground" />
         </div>
       ) : tab === "products" ? (
-        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          {productsList.map((item) => (
-            <div className="panel group p-4" key={item.id}>
-              <div className="flex items-start justify-between">
-                <span className="grid size-9 place-items-center rounded-lg border bg-muted/35">
-                  <PackageOpen className="size-4" />
-                </span>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="icon" className="size-7">
-                      <MoreHorizontal className="size-4" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem onClick={() => handleOpenEditProduct(item)}>
-                      Edit product
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => handleDuplicateProduct(item)}>
-                      Duplicate
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      className="text-rose-600"
-                      onClick={() => handleDeleteProduct(item.id, item.name)}
-                    >
-                      Archive product
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
-              <h3 className="mt-4 text-sm font-semibold">{item.name}</h3>
-              <p className="mt-1 h-10 text-[11px] leading-5 text-muted-foreground">
-                {item.description || `${item.category} capabilities billed through a ${item.model.toLowerCase()} model.`}
-              </p>
-              <div className="mt-4 grid grid-cols-2 border-t pt-3 text-[11px]">
-                <div>
-                  <span className="text-muted-foreground">Customers</span>
-                  <b className="mt-1 block font-tabular text-sm">{formatNumber(item.customers)}</b>
+        productsList.length === 0 ? (
+          <div className="mt-4 panel p-8 text-center">
+            <p className="text-xs text-muted-foreground">No commercial products registered in catalog.</p>
+          </div>
+        ) : (
+          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            {productsList.map((item) => {
+              const matchedPlansCount = plansList.filter(
+                (p) => (p.product || "").toLowerCase() === (item.name || "").toLowerCase()
+              ).length;
+              return (
+                <div className="panel group p-4" key={item.id}>
+                  <div className="flex items-start justify-between">
+                    <span className="grid size-9 place-items-center rounded-lg border bg-muted/35">
+                      <PackageOpen className="size-4" />
+                    </span>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="icon" className="size-7">
+                          <MoreHorizontal className="size-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => handleOpenEditProduct(item)}>
+                          Edit product
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => handleDuplicateProduct(item)}>
+                          Duplicate
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          className="text-rose-600"
+                          onClick={() => handleDeleteProduct(item.id, item.name)}
+                        >
+                          Archive product
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                  <h3 className="mt-4 text-sm font-semibold">{item.name}</h3>
+                  <p className="mt-1 h-10 text-[11px] leading-5 text-muted-foreground">
+                    {item.description || `${item.category} capabilities billed through a ${item.model.toLowerCase()} model.`}
+                  </p>
+                  <div className="mt-4 grid grid-cols-2 border-t pt-3 text-[11px]">
+                    <div>
+                      <span className="text-muted-foreground">Customers</span>
+                      <b className="mt-1 block font-tabular text-sm">{formatNumber(item.customers || 0)}</b>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Plans</span>
+                      <b className="mt-1 block font-tabular text-sm">{matchedPlansCount}</b>
+                    </div>
+                  </div>
+                  <div className="mt-3 flex items-center justify-between">
+                    <StatusBadge status={item.status} />
+                    <span className="text-[10px] text-muted-foreground">{item.model}</span>
+                  </div>
                 </div>
-                <div>
-                  <span className="text-muted-foreground">Plans</span>
-                  <b className="mt-1 block font-tabular text-sm">{item.plans}</b>
-                </div>
-              </div>
-              <div className="mt-3 flex items-center justify-between">
-                <StatusBadge status={item.status} />
-                <span className="text-[10px] text-muted-foreground">{item.model}</span>
-              </div>
-            </div>
-          ))}
-        </div>
+              );
+            })}
+          </div>
+        )
       ) : (
         <div className="mt-4 panel overflow-hidden">
           <div className="p-4 pb-2">
@@ -402,7 +426,14 @@ export function ProductsPlans() {
                 </tr>
               </thead>
               <tbody>
-                {plansList.map((item) => (
+                {plansList.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="py-8 text-center text-xs text-muted-foreground">
+                      No commercial plans registered in catalog.
+                    </td>
+                  </tr>
+                ) : (
+                  plansList.map((item) => (
                   <tr key={item.id}>
                     <td className="font-medium">{item.name}</td>
                     <td>{item.product}</td>
@@ -442,7 +473,8 @@ export function ProductsPlans() {
                       </DropdownMenu>
                     </td>
                   </tr>
-                ))}
+                ))
+              )}
               </tbody>
             </table>
           </div>
@@ -677,7 +709,7 @@ export function Subscriptions() {
     customerId: "",
     plan: "Growth",
     cycle: "Annual",
-    mrr: 128000,
+    mrr: 0,
     status: "Active",
     autoRenewal: true,
   });
@@ -702,24 +734,31 @@ export function Subscriptions() {
   }, []);
 
   const filtered = useMemo(() => {
-    return subscriptionsList.filter(
-      (item) =>
-        (filter === "All" ||
-          item.status === filter ||
-          (filter === "Renewal Due" && item.renewalDate.includes("Sep 2026"))) &&
-        item.customer.toLowerCase().includes(query.toLowerCase())
-    );
+    return subscriptionsList.filter((item) => {
+      const isRenewalDue =
+        item.status === "Renewal Due" ||
+        (new Date(item.renewalDate).getTime() > Date.now() &&
+          new Date(item.renewalDate).getTime() <= Date.now() + 30 * 86400000);
+      const matchesFilter =
+        filter === "All" ||
+        item.status === filter ||
+        (filter === "Renewal Due" && isRenewalDue);
+      return (
+        matchesFilter &&
+        (item.customer || "").toLowerCase().includes(query.toLowerCase())
+      );
+    });
   }, [subscriptionsList, filter, query]);
 
   const handleOpenCreate = () => {
     const defaultCust = apiCustomers[0];
     setEditingSub(null);
     setForm({
-      customer: defaultCust?.company || "Acme Commerce",
-      customerId: defaultCust?.id || "CUS-10482",
+      customer: defaultCust?.company || "",
+      customerId: defaultCust?.id || "",
       plan: "Growth",
       cycle: "Annual",
-      mrr: 128000,
+      mrr: 0,
       status: "Active",
       autoRenewal: true,
     });
@@ -737,7 +776,7 @@ export function Subscriptions() {
           plan: form.plan,
           cycle: form.cycle,
           mrr: form.mrr,
-          amount: form.mrr * 12,
+          amount: form.cycle === "Annual" ? form.mrr * 12 : form.mrr,
           status: form.status,
           autoRenewal: form.autoRenewal,
         });
@@ -749,7 +788,7 @@ export function Subscriptions() {
           plan: form.plan,
           cycle: form.cycle,
           mrr: form.mrr,
-          amount: form.mrr * 12,
+          amount: form.cycle === "Annual" ? form.mrr * 12 : form.mrr,
           status: form.status,
           payment: "Paid",
           autoRenewal: form.autoRenewal,
@@ -815,6 +854,16 @@ export function Subscriptions() {
     });
   };
 
+  const activeSubsCount = subscriptionsList.filter((s) => s.status === "Active").length;
+  const totalMrr = subscriptionsList.reduce((acc, s) => acc + (s.mrr || 0), 0);
+  const renewingSoonCount = subscriptionsList.filter((s) => {
+    const status = (s.status || "").toLowerCase();
+    if (status === "renewal due" || status === "renewal_due") return true;
+    const d = new Date(s.renewalDate).getTime();
+    return !isNaN(d) && d >= Date.now() && d <= Date.now() + 30 * 86400000;
+  }).length;
+  const pastDueCount = subscriptionsList.filter((s) => s.status === "Past due").length;
+
   return (
     <AppShell breadcrumbs={["Billing", "Subscriptions"]}>
       <PageHeader
@@ -831,10 +880,10 @@ export function Subscriptions() {
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {[
-          ["Active subscriptions", subscriptionsList.filter((s) => s.status === "Active").length.toString(), "+7.8%", CreditCard],
-          ["MRR", formatCurrency(subscriptionsList.reduce((acc, s) => acc + (s.mrr || 0), 0)), "+6.2%", CheckCircle2],
-          ["Renewing soon", subscriptionsList.filter((s) => s.status === "Renewal Due").length.toString(), "Action required", ShieldCheck],
-          ["Past due", subscriptionsList.filter((s) => s.status === "Past due").length.toString(), "Review", XCircle],
+          ["Active subscriptions", activeSubsCount.toString(), `${subscriptionsList.length} total contracts`, CreditCard],
+          ["MRR", formatCurrency(totalMrr), activeSubsCount > 0 ? "Normalized monthly recurring" : "No active revenue", CheckCircle2],
+          ["Renewing soon", renewingSoonCount.toString(), renewingSoonCount > 0 ? "Upcoming in 30 days" : "None in next 30 days", ShieldCheck],
+          ["Past due", pastDueCount.toString(), pastDueCount > 0 ? "Requires review" : "No past due accounts", XCircle],
         ].map(([l, v, d, I]) => (
           <div className="metric-card" key={l as string}>
             <div className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
@@ -896,82 +945,96 @@ export function Subscriptions() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((item) => (
-                <tr key={item.id}>
-                  <td>
-                    <Link
-                      href={`/customers/${item.customerId}`}
-                      className="font-medium hover:underline"
-                    >
-                      {item.customer}
-                    </Link>
-                    <div className="font-mono text-[10px] text-muted-foreground">
-                      {item.customerId}
-                    </div>
-                  </td>
-                  <td>{item.plan}</td>
-                  <td>
-                    <StatusBadge status={item.status} />
-                  </td>
-                  <td>{item.startDate}</td>
-                  <td>{item.renewalDate}</td>
-                  <td>{item.cycle}</td>
-                  <td className="text-right font-tabular font-medium">
-                    {formatCurrency(item.mrr)}
-                  </td>
-                  <td className="text-right font-tabular">{formatCurrency(item.amount)}</td>
-                  <td>
-                    <StatusBadge status={item.payment} />
-                  </td>
-                  <td>
-                    <Switch
-                      checked={item.autoRenewal}
-                      onCheckedChange={(checked) => handleToggleAutoRenew(item, checked)}
-                    />
-                  </td>
-                  <td>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon" className="size-7">
-                          <MoreHorizontal className="size-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem
-                          onClick={() => {
-                            setEditingSub(item);
-                            setForm({
-                              customer: item.customer,
-                              customerId: item.customerId,
-                              plan: item.plan,
-                              cycle: item.cycle,
-                              mrr: item.mrr,
-                              status: item.status,
-                              autoRenewal: item.autoRenewal,
-                            });
-                            setCreateDialogOpen(true);
-                          }}
-                        >
-                          Change plan
-                        </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => handleRenewNow(item)}>
-                          Renew now
-                        </DropdownMenuItem>
-                        <DropdownMenuItem asChild>
-                          <Link href={`/customers/${item.customerId}`}>View customer</Link>
-                        </DropdownMenuItem>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem
-                          className="text-rose-600"
-                          onClick={() => handleCancelSub(item)}
-                        >
-                          Cancel subscription
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
+              {loading ? (
+                <tr>
+                  <td colSpan={11} className="py-8 text-center text-xs text-muted-foreground">
+                    Loading subscriptions…
                   </td>
                 </tr>
-              ))}
+              ) : filtered.length === 0 ? (
+                <tr>
+                  <td colSpan={11} className="py-8 text-center text-xs text-muted-foreground">
+                    No subscriptions recorded.
+                  </td>
+                </tr>
+              ) : (
+                filtered.map((item) => (
+                  <tr key={item.id}>
+                    <td>
+                      <Link
+                        href={`/customers/${item.customerId}`}
+                        className="font-medium hover:underline"
+                      >
+                        {item.customer}
+                      </Link>
+                      <div className="font-mono text-[10px] text-muted-foreground">
+                        {item.customerId}
+                      </div>
+                    </td>
+                    <td>{item.plan}</td>
+                    <td>
+                      <StatusBadge status={item.status} />
+                    </td>
+                    <td>{item.startDate}</td>
+                    <td>{item.renewalDate}</td>
+                    <td>{item.cycle}</td>
+                    <td className="text-right font-tabular font-medium">
+                      {formatCurrency(item.mrr)}
+                    </td>
+                    <td className="text-right font-tabular">{formatCurrency(item.amount)}</td>
+                    <td>
+                      <StatusBadge status={item.payment} />
+                    </td>
+                    <td>
+                      <Switch
+                        checked={item.autoRenewal}
+                        onCheckedChange={(checked) => handleToggleAutoRenew(item, checked)}
+                      />
+                    </td>
+                    <td>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon" className="size-7">
+                            <MoreHorizontal className="size-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem
+                            onClick={() => {
+                              setEditingSub(item);
+                              setForm({
+                                customer: item.customer,
+                                customerId: item.customerId,
+                                plan: item.plan,
+                                cycle: item.cycle,
+                                mrr: item.mrr,
+                                status: item.status,
+                                autoRenewal: item.autoRenewal,
+                              });
+                              setCreateDialogOpen(true);
+                            }}
+                          >
+                            Change plan
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => handleRenewNow(item)}>
+                            Renew now
+                          </DropdownMenuItem>
+                          <DropdownMenuItem asChild>
+                            <Link href={`/customers/${item.customerId}`}>View customer</Link>
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            className="text-rose-600"
+                            onClick={() => handleCancelSub(item)}
+                          >
+                            Cancel subscription
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
@@ -1118,18 +1181,20 @@ export function Invoices() {
   const [invoicesList, setInvoicesList] = useState<any[]>([]);
   const [selected, setSelected] = useState<any | null>(null);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [loading, setLoading] = useState(true);
   const { customers: apiCustomers } = useCustomerAnalytics();
 
   const [form, setForm] = useState({
     customerId: "",
     customer: "",
-    product: "Omnichannel Growth",
-    amount: 128000,
+    product: "",
+    amount: 0,
     status: "Sent",
     dueDate: new Date(Date.now() + 14 * 86400000).toISOString().split("T")[0],
   });
 
   const loadInvoices = async () => {
+    setLoading(true);
     try {
       const res = await fetch("/api/invoices");
       if (res.ok) {
@@ -1144,6 +1209,8 @@ export function Invoices() {
       }
     } catch (err) {
       console.warn("Could not load invoices from server:", err);
+    } finally {
+      setLoading(false);
     }
 
     try {
@@ -1184,10 +1251,10 @@ export function Invoices() {
   const handleOpenCreate = () => {
     const c = apiCustomers[0];
     setForm({
-      customerId: c?.id || "CUS-10482",
-      customer: c?.company || "Acme Commerce",
-      product: "Omnichannel Growth",
-      amount: 128000,
+      customerId: c?.id || "",
+      customer: c?.company || "",
+      product: "",
+      amount: 0,
       status: "Sent",
       dueDate: new Date(Date.now() + 14 * 86400000).toISOString().split("T")[0],
     });
@@ -1294,7 +1361,7 @@ export function Invoices() {
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {[
-          ["Billed this month", formatCurrency(invoicesList.reduce((a, b) => a + (b.total || 0), 0)), "+8.4%"],
+          ["Total billed", formatCurrency(invoicesList.reduce((a, b) => a + (b.total || 0), 0)), `${invoicesList.length} total issued`],
           ["Collected", formatCurrency(invoicesList.filter((i) => i.status === "Paid").reduce((a, b) => a + (b.total || 0), 0)), "Settled"],
           ["Outstanding", formatCurrency(invoicesList.filter((i) => i.status === "Sent").reduce((a, b) => a + (b.total || 0), 0)), `${invoicesList.filter((i) => i.status === "Sent").length} invoices`],
           ["Overdue", formatCurrency(invoicesList.filter((i) => i.status === "Overdue").reduce((a, b) => a + (b.total || 0), 0)), `${invoicesList.filter((i) => i.status === "Overdue").length} invoices`],
@@ -1358,41 +1425,55 @@ export function Invoices() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((item) => (
-                <tr key={`${item.customerId}-${item.id}`}>
-                  <td className="font-mono text-[11px]">{item.id}</td>
-                  <td>
-                    <Link
-                      href={`/customers/${item.customerId}`}
-                      className="font-medium hover:underline"
-                    >
-                      {item.customer}
-                    </Link>
-                  </td>
-                  <td>{item.date}</td>
-                  <td>{item.dueDate}</td>
-                  <td>{item.product}</td>
-                  <td className="text-right font-tabular">{formatCurrency(item.amount)}</td>
-                  <td className="text-right font-tabular">{formatCurrency(item.tax)}</td>
-                  <td className="text-right font-tabular font-medium">
-                    {formatCurrency(item.total)}
-                  </td>
-                  <td>
-                    <StatusBadge status={item.status} />
-                  </td>
-                  <td>{item.paymentDate || "—"}</td>
-                  <td>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 text-[11px]"
-                      onClick={() => setSelected(item)}
-                    >
-                      View <ChevronRight className="size-3" />
-                    </Button>
+              {loading ? (
+                <tr>
+                  <td colSpan={11} className="py-8 text-center text-xs text-muted-foreground">
+                    Loading invoices…
                   </td>
                 </tr>
-              ))}
+              ) : filtered.length === 0 ? (
+                <tr>
+                  <td colSpan={11} className="py-8 text-center text-xs text-muted-foreground">
+                    No invoices recorded.
+                  </td>
+                </tr>
+              ) : (
+                filtered.map((item) => (
+                  <tr key={`${item.customerId}-${item.id}`}>
+                    <td className="font-mono text-[11px]">{item.id}</td>
+                    <td>
+                      <Link
+                        href={`/customers/${item.customerId}`}
+                        className="font-medium hover:underline"
+                      >
+                        {item.customer}
+                      </Link>
+                    </td>
+                    <td>{item.date}</td>
+                    <td>{item.dueDate}</td>
+                    <td>{item.product}</td>
+                    <td className="text-right font-tabular">{formatCurrency(item.amount)}</td>
+                    <td className="text-right font-tabular">{formatCurrency(item.tax)}</td>
+                    <td className="text-right font-tabular font-medium">
+                      {formatCurrency(item.total)}
+                    </td>
+                    <td>
+                      <StatusBadge status={item.status} />
+                    </td>
+                    <td>{item.paymentDate || "—"}</td>
+                    <td>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 text-[11px]"
+                        onClick={() => setSelected(item)}
+                      >
+                        View <ChevronRight className="size-3" />
+                      </Button>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
@@ -1686,7 +1767,7 @@ export function Team() {
             Departments
           </div>
           <div className="mt-3 font-tabular text-2xl font-semibold">
-            {new Set(teamList.map((m) => m.department)).size}
+            {new Set(teamList.map((m) => m.department).filter((d) => d && d !== "—")).size}
           </div>
           <div className="mt-1 text-[11px] text-muted-foreground">Active organizational units</div>
         </div>
@@ -1713,8 +1794,21 @@ export function Team() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((item) => (
-                <tr key={item.id}>
+              {loading ? (
+                <tr>
+                  <td colSpan={8} className="py-8 text-center text-xs text-muted-foreground">
+                    Loading team members…
+                  </td>
+                </tr>
+              ) : rows.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="py-8 text-center text-xs text-muted-foreground">
+                    No team members recorded.
+                  </td>
+                </tr>
+              ) : (
+                rows.map((item) => (
+                  <tr key={item.id}>
                   <td>
                     <div className="flex items-center gap-2.5">
                       <Avatar initials={item.initials} />
@@ -1769,8 +1863,9 @@ export function Team() {
                     </DropdownMenu>
                   </td>
                 </tr>
-              ))}
-            </tbody>
+              ))
+            )}
+          </tbody>
           </table>
         </div>
       </div>

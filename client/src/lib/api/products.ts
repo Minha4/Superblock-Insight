@@ -14,54 +14,24 @@ export interface ProductItem {
 
 const STORAGE_KEY = "analytics_studio_custom_products";
 
-const DEFAULT_PRODUCTS: ProductItem[] = [
-  {
-    id: "prod-omnichannel",
-    name: "Omnichannel Suite",
-    category: "Communication",
-    model: "Usage based",
-    status: "Active",
-    plans: 4,
-    customers: 24,
-    description: "Complete unified communications for WhatsApp, SMS, Email, and Voice.",
-    price: 3499,
-    createdAt: "2024-01-15T10:00:00Z",
-  },
-  {
-    id: "prod-ai-agents",
-    name: "AI Agent Platform",
-    category: "Automation",
-    model: "Tiered",
-    status: "Active",
-    plans: 3,
-    customers: 18,
-    description: "Autonomous customer service bots with CRM integration and intent routing.",
-    price: 5999,
-    createdAt: "2024-02-01T10:00:00Z",
-  },
-  {
-    id: "prod-analytics-pro",
-    name: "Analytics Studio Pro",
-    category: "Analytics",
-    model: "Flat fee",
-    status: "Active",
-    plans: 2,
-    customers: 12,
-    description: "Deep funnel analytics, custom reporting, and predictive cohort tracking.",
-    price: 2499,
-    createdAt: "2024-03-01T10:00:00Z",
-  },
-];
-
 function loadLocalProducts(): ProductItem[] {
-  if (typeof window === "undefined") return DEFAULT_PRODUCTS;
+  if (typeof window === "undefined") return [];
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return DEFAULT_PRODUCTS;
+    if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) && parsed.length > 0 ? parsed : DEFAULT_PRODUCTS;
+    if (Array.isArray(parsed)) {
+      return parsed.filter(
+        (p: any) =>
+          p &&
+          p.id !== "prod-omnichannel" &&
+          p.id !== "prod-ai-agents" &&
+          p.id !== "prod-analytics-pro"
+      );
+    }
+    return [];
   } catch {
-    return DEFAULT_PRODUCTS;
+    return [];
   }
 }
 
@@ -86,10 +56,10 @@ export async function getProducts(): Promise<ProductItem[]> {
           category: p.category || "General",
           model: p.billing || "Usage based",
           status: p.active === false ? "Archived" : "Active",
-          plans: typeof p.plans === "number" ? p.plans : 1,
+          plans: typeof p.plans === "number" ? p.plans : 0,
           customers: typeof p.customers === "number" ? p.customers : 0,
           description: p.description || "",
-          price: typeof p.price === "number" ? p.price : 0,
+          price: typeof p.price === "number" ? p.price : (Number(p.price) || 0),
           createdAt: p.created_at || new Date().toISOString(),
           updatedAt: p.updated_at || new Date().toISOString(),
         }));

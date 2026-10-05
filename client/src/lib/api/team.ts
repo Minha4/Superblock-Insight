@@ -14,66 +14,25 @@ export interface TeamMemberItem {
 
 const STORAGE_KEY = "analytics_studio_custom_team";
 
-const DEFAULT_TEAM: TeamMemberItem[] = [
-  {
-    id: "tm-1",
-    name: "Aakash Sharma",
-    initials: "AS",
-    email: "aakash@superblock.chat",
-    role: "Admin",
-    department: "Executive",
-    customers: 42,
-    status: "Active",
-    lastActive: "Now",
-    createdAt: "2024-01-01T09:00:00Z",
-  },
-  {
-    id: "tm-2",
-    name: "Sneha Patel",
-    initials: "SP",
-    email: "sneha@superblock.chat",
-    role: "Customer Success",
-    department: "Success",
-    customers: 28,
-    status: "Active",
-    lastActive: "10m ago",
-    createdAt: "2024-01-15T11:00:00Z",
-  },
-  {
-    id: "tm-3",
-    name: "Rohan Verma",
-    initials: "RV",
-    email: "rohan@superblock.chat",
-    role: "Support Lead",
-    department: "Support",
-    customers: 15,
-    status: "Away",
-    lastActive: "2h ago",
-    createdAt: "2024-02-01T14:30:00Z",
-  },
-  {
-    id: "tm-4",
-    name: "Pooja Nair",
-    initials: "PN",
-    email: "pooja@superblock.chat",
-    role: "Billing Specialist",
-    department: "Finance",
-    customers: 19,
-    status: "Active",
-    lastActive: "Just now",
-    createdAt: "2024-02-10T16:00:00Z",
-  },
-];
-
 function loadLocalTeamMembers(): TeamMemberItem[] {
-  if (typeof window === "undefined") return DEFAULT_TEAM;
+  if (typeof window === "undefined") return [];
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return DEFAULT_TEAM;
+    if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) && parsed.length > 0 ? parsed : DEFAULT_TEAM;
+    if (Array.isArray(parsed)) {
+      return parsed.filter(
+        (m: any) =>
+          m &&
+          m.id !== "tm-1" &&
+          m.id !== "tm-2" &&
+          m.id !== "tm-3" &&
+          m.id !== "tm-4"
+      );
+    }
+    return [];
   } catch {
-    return DEFAULT_TEAM;
+    return [];
   }
 }
 
@@ -103,12 +62,12 @@ export async function getTeamMembers(): Promise<TeamMemberItem[]> {
           id: m.id || `tm-${Date.now()}`,
           name: m.name || m.org_user_name || "Team Member",
           initials: getInitials(m.name || m.org_user_name),
-          email: m.email || "team@superblock.chat",
+          email: m.email || "—",
           role: m.role || "Member",
-          department: m.department || "Customer",
+          department: m.department || "—",
           customers: typeof m.customers === "number" ? m.customers : 0,
           status: (m.status || "Active") as TeamMemberItem["status"],
-          lastActive: m.last_active || "Recently",
+          lastActive: m.last_active || (m.created_at ? new Date(m.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "—"),
           createdAt: m.created_at || new Date().toISOString(),
           updatedAt: m.updated_at || new Date().toISOString(),
         }));
@@ -130,7 +89,7 @@ export async function inviteTeamMember(input: Partial<TeamMemberItem>): Promise<
     id: input.id || `tm-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     name,
     initials: getInitials(name),
-    email: input.email?.trim() || `${name.toLowerCase().replace(/\s+/g, ".")}@superblock.chat`,
+    email: input.email?.trim() || "",
     role: input.role || "Customer Success",
     department: input.department || "Customer",
     customers: input.customers ?? 0,
@@ -164,9 +123,9 @@ export async function inviteTeamMember(input: Partial<TeamMemberItem>): Promise<
     id: data.teamMember.id,
     name: data.teamMember.name,
     initials: getInitials(data.teamMember.name),
-    email: data.teamMember.email,
+    email: data.teamMember.email || "",
     role: data.teamMember.role || savedMember.role,
-    department: savedMember.department,
+    department: data.teamMember.department || savedMember.department,
     customers: savedMember.customers,
     status: savedMember.status,
     lastActive: "Just now",
@@ -194,9 +153,9 @@ export async function updateTeamMember(id: string, updates: Partial<TeamMemberIt
     id,
     name: updates.name || target?.name || "Team Member",
     initials: getInitials(updates.name || target?.name),
-    email: updates.email || target?.email || "team@superblock.chat",
+    email: updates.email || target?.email || "—",
     role: updates.role || target?.role || "Member",
-    department: updates.department || target?.department || "Customer",
+    department: updates.department || target?.department || "—",
     customers: updates.customers ?? target?.customers ?? 0,
     status: (updates.status || target?.status || "Active") as TeamMemberItem["status"],
     lastActive: "Just now",

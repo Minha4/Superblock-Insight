@@ -1,5 +1,3 @@
-import { plans as seedPlans } from "@/data/mockData";
-
 export interface PlanItem {
   id: string;
   name: string;
@@ -16,34 +14,19 @@ export interface PlanItem {
 
 const STORAGE_KEY = "sb_plans_catalog";
 
-function getSeedPlans(): PlanItem[] {
-  return seedPlans.map((p, idx) => ({
-    id: `plan-seed-${idx + 1}`,
-    name: p.name,
-    product: p.product,
-    monthly: p.monthly,
-    annual: p.annual,
-    limit: p.limit,
-    features: p.features,
-    status: (p.status as PlanItem["status"]) || "Active",
-    createdAt: new Date().toISOString(),
-  }));
-}
-
 function loadLocalPlans(): PlanItem[] {
-  if (typeof window === "undefined") return getSeedPlans();
+  if (typeof window === "undefined") return [];
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      const initial = getSeedPlans();
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(initial));
-      return initial;
-    }
+    if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) && parsed.length > 0 ? parsed : getSeedPlans();
+    if (Array.isArray(parsed)) {
+      return parsed.filter((p: any) => p && !p.id?.startsWith("plan-seed-"));
+    }
+    return [];
   } catch (err) {
     console.warn("Could not read plans from localStorage:", err);
-    return getSeedPlans();
+    return [];
   }
 }
 

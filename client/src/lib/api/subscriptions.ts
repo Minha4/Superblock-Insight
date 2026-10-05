@@ -19,63 +19,24 @@ export interface SubscriptionItem {
 
 const STORAGE_KEY = "analytics_studio_custom_subscriptions";
 
-const DEFAULT_SUBSCRIPTIONS: SubscriptionItem[] = [
-  {
-    id: "sub-101",
-    customer: "Acme Corp",
-    customerId: "CUS-001",
-    plan: "Enterprise",
-    status: "Active",
-    startDate: "2024-01-10",
-    renewalDate: "2025-01-10",
-    cycle: "Annual",
-    mrr: 12500,
-    amount: 150000,
-    payment: "Paid",
-    autoRenewal: true,
-    createdAt: "2024-01-10T09:00:00Z",
-  },
-  {
-    id: "sub-102",
-    customer: "Global Logistics",
-    customerId: "CUS-002",
-    plan: "Growth",
-    status: "Active",
-    startDate: "2024-02-15",
-    renewalDate: "2024-05-15",
-    cycle: "Quarterly",
-    mrr: 4500,
-    amount: 13500,
-    payment: "Paid",
-    autoRenewal: true,
-    createdAt: "2024-02-15T11:30:00Z",
-  },
-  {
-    id: "sub-103",
-    customer: "FinTech Sol",
-    customerId: "CUS-003",
-    plan: "Starter",
-    status: "Pending",
-    startDate: "2024-03-01",
-    renewalDate: "2024-04-01",
-    cycle: "Monthly",
-    mrr: 1200,
-    amount: 1200,
-    payment: "Pending",
-    autoRenewal: false,
-    createdAt: "2024-03-01T14:20:00Z",
-  },
-];
-
 function loadLocalSubscriptions(): SubscriptionItem[] {
-  if (typeof window === "undefined") return DEFAULT_SUBSCRIPTIONS;
+  if (typeof window === "undefined") return [];
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return DEFAULT_SUBSCRIPTIONS;
+    if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) && parsed.length > 0 ? parsed : DEFAULT_SUBSCRIPTIONS;
+    if (Array.isArray(parsed)) {
+      return parsed.filter(
+        (s: any) =>
+          s &&
+          s.id !== "sub-101" &&
+          s.id !== "sub-102" &&
+          s.id !== "sub-103"
+      );
+    }
+    return [];
   } catch {
-    return DEFAULT_SUBSCRIPTIONS;
+    return [];
   }
 }
 
@@ -107,6 +68,13 @@ export async function getSubscriptions(customerId?: string): Promise<Subscriptio
                 : (contactInfo?.customerName || (!isGeneric(localMatch?.customer) ? localMatch?.customer : "SuperBlock Customer")));
           const resolvedPlan = s.plan_name || s.plan || localMatch?.plan || "Growth";
 
+          const rawAmount = Number(s.amount) || 0;
+          const isAnnual =
+            (s.billing_interval || "").toLowerCase().includes("annual") ||
+            (s.billing_interval || "").toLowerCase().includes("year");
+          const amount = isAnnual ? rawAmount : rawAmount * 12;
+          const mrr = isAnnual ? Math.round(rawAmount / 12) : rawAmount;
+
           return {
             id: s.id || `sub-${Date.now()}`,
             customer: resolvedCustomer,
@@ -115,9 +83,9 @@ export async function getSubscriptions(customerId?: string): Promise<Subscriptio
             status: (s.status ? s.status.charAt(0).toUpperCase() + s.status.slice(1).toLowerCase() : "Active") as SubscriptionItem["status"],
             startDate: s.start_date || new Date().toISOString().split("T")[0],
             renewalDate: s.end_date || new Date(Date.now() + 30 * 86400000).toISOString().split("T")[0],
-            cycle: (s.billing_interval ? s.billing_interval.charAt(0).toUpperCase() + s.billing_interval.slice(1).toLowerCase() : "Monthly") as SubscriptionItem["cycle"],
-            mrr: Number(s.amount) || 0,
-            amount: (Number(s.amount) || 0) * 12,
+            cycle: (s.billing_interval ? s.billing_interval.charAt(0).toUpperCase() + s.billing_interval.slice(1).toLowerCase() : (isAnnual ? "Annual" : "Monthly")) as SubscriptionItem["cycle"],
+            mrr,
+            amount,
             payment: (s.status?.toLowerCase() === "active" ? "Paid" : "Pending") as SubscriptionItem["payment"],
             autoRenewal: true,
             createdAt: s.created_at || new Date().toISOString(),
@@ -125,12 +93,8 @@ export async function getSubscriptions(customerId?: string): Promise<Subscriptio
           };
         });
 
-        if (mappedFromDb.length > 0) {
-          saveLocalSubscriptions(mappedFromDb);
-          return customerId ? mappedFromDb.filter((m) => m.customerId === customerId) : mappedFromDb;
-        } else if (local.length > 0 && !data.offline) {
-          return customerId ? local.filter((m) => m.customerId === customerId) : local;
-        }
+        saveLocalSubscriptions(mappedFromDb);
+        return customerId ? mappedFromDb.filter((m) => m.customerId === customerId) : mappedFromDb;
       }
     }
   } catch (err) {
