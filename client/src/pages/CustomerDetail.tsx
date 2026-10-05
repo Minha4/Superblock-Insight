@@ -131,6 +131,7 @@ import {
 } from "@/data/mockData";
 import { useCustomerAnalytics, defaultAllCustomers } from "@/lib/api/customerAnalytics";
 import { useCustomerProfile } from "@/lib/api/customerProfile";
+import { useUsageMetrics, type PlatformUsageResponse } from "@/lib/api/usage";
 import { fetchAuthSession } from "aws-amplify/auth";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -172,15 +173,6 @@ function formatLastActive(dateStr?: string | null): string {
   }
 }
 
-const overviewMetrics = [
-  ["Total messages", "messages", "+18.4%"],
-  ["WhatsApp", "whatsapp", "+22.8%"],
-  ["Broadcasts", "broadcasts", "+12.1%"],
-  ["SMS", "sms", "−3.6%"],
-  ["Email", "email", "+8.4%"],
-  ["Conversations", "conversations", "+14.2%"],
-] as const;
-
 export default function CustomerDetail() {
   const params = useParams<{ id: string }>();
   const { customers: apiCustomers, loading } = useCustomerAnalytics();
@@ -209,6 +201,7 @@ export default function CustomerDetail() {
   }, [apiCustomers, params.id]);
 
   const { profile } = useCustomerProfile(rawCustomer?.id);
+  const { data: usageData } = useUsageMetrics(rawCustomer?.id);
 
   interface CustomerOperationsPayload {
     activities: CustomerActivity[];
@@ -352,7 +345,25 @@ export default function CustomerDetail() {
     let activatedAt = rawCustomer.activatedAt;
     let lastActivity = rawCustomer.lastActivity;
     let subscription = { ...rawCustomer.subscription };
-    let usage = { ...rawCustomer.usage };
+    // Resolve real operational usage data from public.usage_metrics and public.users via useUsageMetrics
+    // Zero fake multipliers: if no real operational telemetry is recorded, default cleanly to 0
+    const liveMessages = usageData?.metricBreakdown?.messages?.totalValue;
+    const planQuota = usageData?.planMetrics?.totalConfiguredMessageVolume;
+    const profileVol = profile?.message_volume ? parseInt(profile.message_volume, 10) : null;
+    const resolvedMessages = liveMessages ?? (planQuota ?? (profileVol && !isNaN(profileVol) ? profileVol : 0));
+
+    let usage = {
+      messages: resolvedMessages,
+      whatsapp: usageData?.metricBreakdown?.whatsapp?.totalValue ?? resolvedMessages,
+      broadcasts: usageData?.metricBreakdown?.broadcasts?.totalValue ?? 0,
+      conversations: usageData?.metricBreakdown?.conversations?.totalValue ?? 0,
+      email: usageData?.metricBreakdown?.email?.totalValue ?? 0,
+      sms: usageData?.metricBreakdown?.sms?.totalValue ?? 0,
+      api: usageData?.metricBreakdown?.api_requests?.totalValue ?? usageData?.metricBreakdown?.api?.totalValue ?? 0,
+      automations: usageData?.metricBreakdown?.automations?.totalValue ?? 0,
+      storage: usageData?.metricBreakdown?.storage?.totalValue ?? 0,
+      contacts: usageData?.contactsSummary?.totalContacts ?? (rawCustomer.usage?.contacts || 0),
+    };
     let owner = { ...rawCustomer.owner };
 
     if (profile) {
@@ -596,7 +607,7 @@ export default function CustomerDetail() {
       notes,
       invoices,
     };
-  }, [rawCustomer, profile, realOperations]);
+  }, [rawCustomer, profile, realOperations, usageData]);
 
   const exportCustomer = () => {
     if (!customer) return;
@@ -814,7 +825,7 @@ export default function CustomerDetail() {
           </TabsList>
         </div>
         <TabsContent value="overview" className="mt-4">
-          <Overview customer={customer} setTab={setTab} />
+          <Overview customer={customer} setTab={setTab} usageData={usageData} />
         </TabsContent>
         <TabsContent value="usage" className="mt-4">
           <Usage customer={customer} />
@@ -855,9 +866,11 @@ export default function CustomerDetail() {
 function Overview({
   customer,
   setTab,
+  usageData,
 }: {
   customer: Customer;
   setTab: (tab: string) => void;
+  usageData?: PlatformUsageResponse | null;
 }) {
   const healthParts = [
     { label: "Adoption", value: customer.health.score > 0 ? 96 : 0 },
@@ -874,43 +887,140 @@ function Overview({
     },
   ];
 
+  // Helper to compute real historical trend percentage if multiple records exist in usageMetrics
+  const computeTrend = (metricName: string) => {
+    if (!usageData?.usageMetrics || usageData.usageMetrics.length < 2) return null;
+    const records = usageData.usageMetrics
+      .filter((r) => r.metric_name === metricName && r.recorded_at && r.metric_value !== null)
+      .sort((a, b) => (a.recorded_at || "").localeCompare(b.recorded_at || ""));
+    if (records.length < 2) return null;
+    const mid = Math.floor(records.length / 2);
+    const earlier = records.slice(0, mid).reduce((sum, r) => sum + (Number(r.metric_value) || 0), 0);
+    const recent = records.slice(mid).reduce((sum, r) => sum + (Number(r.metric_value) || 0), 0);
+    if (earlier <= 0 && recent <= 0) return null;
+    if (earlier <= 0) return { text: "+100%", isNegative: false };
+    const pct = Math.round(((recent - earlier) / earlier) * 100);
+    return {
+      text: pct >= 0 ? `+${pct}%` : `${pct}%`,
+      isNegative: pct < 0,
+    };
+  };
+
+  const overviewCards = useMemo(() => {
+    const liveMessages = usageData?.metricBreakdown?.messages?.totalValue;
+    const planQuota = usageData?.planMetrics?.totalConfiguredMessageVolume;
+
+    const messagesTrend = computeTrend("messages");
+    const whatsappTrend = computeTrend("whatsapp");
+    const broadcastsTrend = computeTrend("broadcasts");
+    const smsTrend = computeTrend("sms");
+    const emailTrend = computeTrend("email");
+    const conversationsTrend = computeTrend("conversations");
+
+    const getMessagesBadge = (val: number) => {
+      if (val <= 0) return { badge: "—", isNegative: false };
+      if (messagesTrend) return { badge: messagesTrend.text, isNegative: messagesTrend.isNegative };
+      if (liveMessages != null && liveMessages > 0) return { badge: "Verified", isNegative: false };
+      if (planQuota) return { badge: "Plan quota", isNegative: false };
+      return { badge: "Recorded", isNegative: false };
+    };
+
+    const getWhatsAppBadge = (val: number) => {
+      if (val <= 0) return { badge: "—", isNegative: false };
+      if (whatsappTrend) return { badge: whatsappTrend.text, isNegative: whatsappTrend.isNegative };
+      if (usageData?.metricBreakdown?.whatsapp?.totalValue != null) return { badge: "Verified", isNegative: false };
+      if (planQuota) return { badge: "Plan quota", isNegative: false };
+      return { badge: "Recorded", isNegative: false };
+    };
+
+    const getGenericBadge = (val: number, trend: { text: string; isNegative: boolean } | null) => {
+      if (val <= 0) return { badge: "—", isNegative: false };
+      if (trend) return { badge: trend.text, isNegative: trend.isNegative };
+      return { badge: "Recorded", isNegative: false };
+    };
+
+    const messagesInfo = getMessagesBadge(customer.usage.messages);
+    const whatsappInfo = getWhatsAppBadge(customer.usage.whatsapp);
+    const broadcastsInfo = getGenericBadge(customer.usage.broadcasts, broadcastsTrend);
+    const smsInfo = getGenericBadge(customer.usage.sms, smsTrend);
+    const emailInfo = getGenericBadge(customer.usage.email, emailTrend);
+    const conversationsInfo = getGenericBadge(customer.usage.conversations, conversationsTrend);
+
+    return [
+      { label: "Total messages", val: customer.usage.messages, ...messagesInfo },
+      { label: "WhatsApp", val: customer.usage.whatsapp, ...whatsappInfo },
+      { label: "Broadcasts", val: customer.usage.broadcasts, ...broadcastsInfo },
+      { label: "SMS", val: customer.usage.sms, ...smsInfo },
+      { label: "Email", val: customer.usage.email, ...emailInfo },
+      { label: "Conversations", val: customer.usage.conversations, ...conversationsInfo },
+    ];
+  }, [customer.usage, usageData]);
+
+  // Real historical momentum data from public.usage_metrics (0 fake analyticsSeries)
+  const momentumData = useMemo(() => {
+    if (!usageData?.usageMetrics || usageData.usageMetrics.length === 0) {
+      return [];
+    }
+
+    const dateMap = new Map<string, { date: string; usage: number; responses: number }>();
+    for (const record of usageData.usageMetrics) {
+      if (!record.recorded_at) continue;
+      const dateKey = record.recorded_at.slice(0, 10);
+      if (!dateMap.has(dateKey)) {
+        dateMap.set(dateKey, { date: dateKey, usage: 0, responses: 0 });
+      }
+      const entry = dateMap.get(dateKey)!;
+      const val = Number(record.metric_value) || 0;
+      if (record.metric_name === "messages" || record.metric_name === "whatsapp") {
+        entry.usage += val;
+      } else if (record.metric_name === "conversations") {
+        entry.responses += val;
+      }
+    }
+
+    return Array.from(dateMap.values()).sort((a, b) => a.date.localeCompare(b.date));
+  }, [usageData]);
+
   return (
     <div className="space-y-4">
+      {usageData?.warning && (
+        <div className="rounded-md border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+          <span className="font-semibold">Operational Notice:</span> {usageData.warning}
+        </div>
+      )}
+
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
-        {overviewMetrics.map(([label, key, trend]) => {
-          const val = customer.usage[key];
-          return (
-            <div className="metric-card" key={label}>
-              <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-                {label}
-              </div>
-              <div className="mt-3 flex items-end justify-between">
-                <div className="font-tabular text-[21px] font-semibold tracking-[-0.035em]">
-                  {val > 0 ? formatNumber(val) : "0"}
-                </div>
-                {val > 0 ? (
-                  <span
-                    className={cn(
-                      "text-[10px] font-semibold",
-                      trend.startsWith("−") ? "text-rose-600" : "text-emerald-600"
-                    )}
-                  >
-                    {trend}
-                  </span>
-                ) : (
-                  <span className="text-[10px] text-muted-foreground">—</span>
-                )}
-              </div>
+        {overviewCards.map(({ label, val, badge, isNegative }) => (
+          <div className="metric-card" key={label}>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+              {label}
             </div>
-          );
-        })}
+            <div className="mt-3 flex items-end justify-between">
+              <div className="font-tabular text-[21px] font-semibold tracking-[-0.035em]">
+                {val > 0 ? formatNumber(val) : "0"}
+              </div>
+              {val > 0 && badge !== "—" ? (
+                <span
+                  className={cn(
+                    "text-[10px] font-semibold",
+                    isNegative ? "text-rose-600" : "text-emerald-600"
+                  )}
+                >
+                  {badge}
+                </span>
+              ) : (
+                <span className="text-[10px] text-muted-foreground">—</span>
+              )}
+            </div>
+          </div>
+        ))}
       </div>
       <div className="grid gap-4 xl:grid-cols-[1.4fr_1fr]">
         <div className="panel p-4">
           <SectionHeader
             title="Usage momentum"
             description={
-              customer.usage.messages > 0
+              momentumData.length > 0
                 ? "Cross-channel engagement for the last 30 days"
                 : "No historical message activity recorded"
             }
@@ -925,19 +1035,11 @@ function Overview({
               </Button>
             }
           />
-          {customer.usage.messages > 0 ? (
+          {momentumData.length > 0 ? (
             <div className="h-[255px]">
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart
-                  data={analyticsSeries.map((row, index) => ({
-                    date: row.date,
-                    usage: Math.round(
-                      (customer.usage.messages / 8 / 1000) * (0.72 + index * 0.05)
-                    ),
-                    responses: Math.round(
-                      (customer.usage.conversations / 8) * (0.75 + index * 0.04)
-                    ),
-                  }))}
+                  data={momentumData}
                   margin={{ top: 8, right: 8, left: -20, bottom: 0 }}
                 >
                   <defs>
@@ -975,7 +1077,7 @@ function Overview({
                   <Area
                     type="monotone"
                     dataKey="usage"
-                    name="Messages (k)"
+                    name="Messages"
                     stroke="var(--chart-1)"
                     strokeWidth={2}
                     fill="url(#customerUsage)"
