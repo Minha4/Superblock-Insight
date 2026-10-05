@@ -65,6 +65,13 @@ export interface GetCredentialsResponse {
   error?: string;
 }
 
+function maskToken(token?: string | null): string | null {
+  if (!token || !token.trim()) return null;
+  const t = token.trim();
+  if (t.length <= 8) return "••••••••";
+  return `${t.slice(0, 4)}••••••••••••••••${t.slice(-4)}`;
+}
+
 /**
  * Lambda handler to GET credentials for a specific customer.
  * 
@@ -154,54 +161,35 @@ export async function getCredentialsHandler(
     }
 
     if (!row) {
-      const accountId = customerId.replace(/\D/g, "").slice(0, 10) || "1029384756";
-      const cleanId = customerId.replace(/[^a-zA-Z0-9]/g, "").slice(0, 8) || "admin";
-      const customerName = `Superblock Customer (${customerId})`;
-
       const credentials: CustomerCredentialsPayload = {
         customerId,
-        customerName,
-        username: cleanId,
-        email: `${cleanId.toLowerCase()}@superblock.chat`,
-        role: "Admin",
-        plan: "Growth",
-        status: "Configured",
-        updatedAt: new Date().toISOString(),
+        customerName: customerId,
+        username: customerId,
+        email: "",
+        role: null,
+        plan: null,
+        status: "Unconfigured",
+        updatedAt: null,
         meta: {
-          appId: "109823475928374",
-          businessAccountId: `waba_${accountId}`,
-          businessPhoneNumberId: `10928374${accountId.slice(0, 7)}`,
-          businessPortfolioId: `portfolio_${accountId}`,
+          appId: null,
+          businessAccountId: null,
+          businessPhoneNumberId: null,
+          businessPortfolioId: null,
           whatsappEndpoint: "https://gateway.superblock.chat/sendWhatsappMessage",
-          hasToken: true,
-          graphApiToken: "EAAQ...9ZBYZD",
+          hasToken: false,
+          graphApiToken: null,
         },
         superblock: {
-          username: cleanId,
-          email: `${cleanId.toLowerCase()}@superblock.chat`,
-          role: "Admin",
-          plan: "Growth",
+          username: customerId,
+          email: "",
+          role: null,
+          plan: null,
           loginUrl: "https://app.superblock.chat",
         },
         channels: {
-          facebook: {
-            pageId: `fb_${accountId.slice(0, 8)}`,
-            pageName: `${customerName} Official`,
-            endpoint: "https://graph.facebook.com/v20.0",
-            hasToken: true,
-            accessToken: "EAAB...9ZBYZD",
-          },
-          instagram: {
-            username: cleanId.toLowerCase(),
-            endpoint: "https://graph.facebook.com/v20.0",
-            hasToken: true,
-            accessToken: "EAAC...9ZBYZD",
-          },
-          shopify: {
-            apiUrl: `https://${cleanId.toLowerCase()}.myshopify.com`,
-            hasToken: true,
-            adminAccessToken: "shpat_...9ZBYZD",
-          },
+          facebook: null,
+          instagram: null,
+          shopify: null,
         },
       };
 
@@ -249,9 +237,9 @@ export async function getCredentialsHandler(
         businessAccountId: row.business_account_id || null,
         businessPhoneNumberId: row.business_phone_number_id || null,
         businessPortfolioId: row.business_portfolio_id || null,
-        whatsappEndpoint: row.whatsapp_endpoint || "https://api.superblock.chat/sendWhatsappMessage",
+        whatsappEndpoint: row.whatsapp_endpoint || "https://gateway.superblock.chat/sendWhatsappMessage",
         hasToken: hasMetaToken,
-        graphApiToken: row.graph_api_token || null,
+        graphApiToken: maskToken(row.graph_api_token),
       },
       superblock: {
         username,
@@ -267,7 +255,7 @@ export async function getCredentialsHandler(
               pageName: row.facebook_page_name || null,
               endpoint: row.facebook_endpoint || null,
               hasToken: !!row.facebook_access_token,
-              accessToken: row.facebook_access_token || null,
+              accessToken: maskToken(row.facebook_access_token),
             }
           : null,
         instagram: hasInstagram
@@ -275,14 +263,14 @@ export async function getCredentialsHandler(
               username: row.instagram_username || null,
               endpoint: row.instagram_endpoint || null,
               hasToken: !!row.instagram_access_token,
-              accessToken: row.instagram_access_token || null,
+              accessToken: maskToken(row.instagram_access_token),
             }
           : null,
         shopify: hasShopify
           ? {
               apiUrl: row.shopify_api_url || null,
               hasToken: !!row.shopify_admin_access_token,
-              adminAccessToken: row.shopify_admin_access_token || null,
+              adminAccessToken: maskToken(row.shopify_admin_access_token),
             }
           : null,
       },

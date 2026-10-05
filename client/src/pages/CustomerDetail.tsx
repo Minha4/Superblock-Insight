@@ -2787,12 +2787,12 @@ function Credentials({ customer }: { customer: Customer }) {
             />
             <CredentialRow
               label="Role"
-              value={data.superblock.role || "Admin"}
+              value={data.superblock.role || "—"}
               action={null}
             />
             <CredentialRow
               label="Plan"
-              value={data.superblock.plan || "Growth"}
+              value={data.superblock.plan || "—"}
               action={null}
             />
             <CredentialRow
