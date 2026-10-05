@@ -73,8 +73,14 @@ export default function Customers() {
   const [visible, setVisible] = useState<Column[]>([...columns]);
   const [selected, setSelected] = useState<string[]>([]);
 
-  // Display all valid customers (real Superblock customers and provisioned records)
-  const displayCustomers = customers;
+  // Display only accounts with valid customer/business data
+  const displayCustomers = useMemo(
+    () =>
+      customers.filter(
+        (c) => c.region && c.region !== "—" && c.industry && c.industry !== "—"
+      ),
+    [customers]
+  );
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
