@@ -41,7 +41,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { formatCurrency, formatNumber, type Customer } from "@/data/mockData";
+import { formatCurrency, formatNumber } from "@/lib/utils";
+import { type Customer } from "@/types/customer";
 import { useCustomerAnalytics } from "@/lib/api/customerAnalytics";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";

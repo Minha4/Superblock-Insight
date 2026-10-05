@@ -1,4 +1,4 @@
-import { type ReactNode } from "react";
+import { useState, useEffect, type ReactNode } from "react";
 import { Link, useLocation } from "wouter";
 import {
   BarChart3,
@@ -179,6 +179,59 @@ export function AppShell({
     setTheme,
   } = useApp();
   const { user, signOut } = useAuth();
+  const [, navigate] = useLocation();
+  const [notifications, setNotifications] = useState<{
+    id: string;
+    title: string;
+    detail: string;
+    type: "warning" | "danger" | "info";
+    href: string;
+  }[]>([]);
+
+  useEffect(() => {
+    Promise.all([
+      fetch("/api/invoices").then((r) => (r.ok ? r.json() : null)).catch(() => null),
+      fetch("/api/subscriptions").then((r) => (r.ok ? r.json() : null)).catch(() => null),
+    ]).then(([invData, subData]) => {
+      const items: {
+        id: string;
+        title: string;
+        detail: string;
+        type: "warning" | "danger" | "info";
+        href: string;
+      }[] = [];
+      if (invData?.invoices && Array.isArray(invData.invoices)) {
+        const overdue = invData.invoices.filter((inv: any) => inv.status === "Overdue");
+        for (const inv of overdue.slice(0, 3)) {
+          items.push({
+            id: `inv-${inv.id}`,
+            title: `Invoice ${inv.invoice_number || inv.id} is overdue`,
+            detail: `${inv.customer_name || "Customer"} · ₹${Number(inv.amount || 0).toLocaleString("en-IN")}`,
+            type: "danger",
+            href: "/invoices",
+          });
+        }
+      }
+      if (subData?.subscriptions && Array.isArray(subData.subscriptions)) {
+        const expiringSoon = subData.subscriptions.filter((s: any) => {
+          if (!s.renewal_date && !s.current_period_end) return false;
+          const renDate = new Date(s.renewal_date || s.current_period_end);
+          const diffDays = (renDate.getTime() - Date.now()) / (1000 * 3600 * 24);
+          return diffDays >= 0 && diffDays <= 30;
+        });
+        for (const sub of expiringSoon.slice(0, 2)) {
+          items.push({
+            id: `sub-${sub.id}`,
+            title: `${sub.customer_name || "Customer"} renewal due soon`,
+            detail: `${sub.plan_name || "Plan"} · Renewal within 30 days`,
+            type: "warning",
+            href: "/subscriptions",
+          });
+        }
+      }
+      setNotifications(items);
+    });
+  }, []);
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -275,40 +328,45 @@ export function AppShell({
                   className="relative size-8 cursor-pointer"
                 >
                   <Bell className="size-4" />
-                  <span className="absolute right-1.5 top-1.5 size-2 rounded-full bg-primary ring-2 ring-background" />
+                  {notifications.length > 0 && (
+                    <span className="absolute right-1.5 top-1.5 size-2 rounded-full bg-primary ring-2 ring-background" />
+                  )}
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-80">
                 <DropdownMenuLabel className="flex items-center justify-between text-xs">
                   Notifications{" "}
                   <span className="text-[11px] font-normal text-muted-foreground">
-                    3 unread
+                    {notifications.length > 0 ? `${notifications.length} alerts` : "All caught up"}
                   </span>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
-                {[
-                  "Northstar renewal is due in 9 days",
-                  "Invoice INV-20242 is overdue",
-                  "Acme Commerce crossed 1M messages",
-                ].map((item, index) => (
-                  <DropdownMenuItem
-                    key={item}
-                    className="items-start gap-2 py-2.5"
-                  >
-                    <span
-                      className={cn(
-                        "mt-1.5 size-2 rounded-full",
-                        index === 1 ? "bg-rose-500" : "bg-primary"
-                      )}
-                    />
-                    <div>
-                      <div className="text-xs leading-5">{item}</div>
-                      <div className="text-[11px] text-muted-foreground">
-                        {index + 1} hr ago
+                {notifications.length > 0 ? (
+                  notifications.map((item) => (
+                    <DropdownMenuItem
+                      key={item.id}
+                      className="items-start gap-2 py-2.5 cursor-pointer"
+                      onClick={() => navigate(item.href)}
+                    >
+                      <span
+                        className={cn(
+                          "mt-1.5 size-2 rounded-full",
+                          item.type === "danger" ? "bg-rose-500" : "bg-primary"
+                        )}
+                      />
+                      <div>
+                        <div className="text-xs leading-5 font-medium">{item.title}</div>
+                        <div className="text-[11px] text-muted-foreground">
+                          {item.detail}
+                        </div>
                       </div>
-                    </div>
-                  </DropdownMenuItem>
-                ))}
+                    </DropdownMenuItem>
+                  ))
+                ) : (
+                  <div className="py-8 text-center text-xs text-muted-foreground">
+                    No new notifications
+                  </div>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
             <DropdownMenu>

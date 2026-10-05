@@ -5,7 +5,7 @@ import { AppShell } from "@/components/AppShell";
 import { AnalyticsToolbar, PageHeader, SectionHeader, StatusBadge, downloadCsv } from "@/components/dashboard-ui";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { formatNumber } from "@/data/mockData";
+import { formatNumber } from "@/lib/utils";
 import { useCustomerAnalytics } from "@/lib/api/customerAnalytics";
 import { useUsageMetrics } from "@/lib/api/usage";
 import { toast } from "sonner";
@@ -20,6 +20,14 @@ export default function Usage() {
   const [region, setRegion] = useState("All regions");
 
   const loading = customersLoading || usageLoading;
+
+  const availableRegions = useMemo(() => {
+    const list = new Set<string>();
+    customers.forEach((c) => {
+      if (c.region && c.region !== "—") list.add(c.region);
+    });
+    return ["All regions", ...Array.from(list)];
+  }, [customers]);
 
   const rows = useMemo(() => {
     return customers
@@ -198,7 +206,7 @@ export default function Usage() {
         <SmallSelect
           value={region}
           onChange={setRegion}
-          items={["All regions", "India", "ap-south-1", "UAE", "Singapore"]}
+          items={availableRegions}
         />
       </div>
 

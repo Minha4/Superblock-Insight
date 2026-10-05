@@ -102,61 +102,42 @@ function isLocalhost(): boolean {
 }
 
 /**
- * Builds standard operational credentials for any customer ID so the credentials interface
- * can always be tested without blocking errors when the database is in maintenance/backup mode.
+ * Builds an explicit unconfigured credentials record when a customer does not have
+ * credentials configured in the database. Never fabricates fake tokens or accounts.
  */
-export function buildFallbackCredentials(
+export function buildUnconfiguredCredentials(
   customerId: string,
-  customerName = "SuperBlock Customer"
+  customerName = ""
 ): CustomerCredentialsData {
-  const accountId = customerId.replace(/\D/g, "").slice(0, 10) || "1029384756";
-  const cleanId = customerId.replace(/[^a-zA-Z0-9]/g, "").slice(0, 8) || "admin";
-  const isSuperblock = customerName.toLowerCase().includes("superblock");
-
   return {
     customerId,
-    customerName,
-    username: cleanId,
-    email: `${cleanId.toLowerCase()}@superblock.chat`,
-    role: "Admin",
-    plan: isSuperblock ? "Enterprise" : "Growth",
-    status: "Configured",
-    updatedAt: new Date().toISOString(),
+    customerName: customerName || customerId,
+    username: customerId,
+    email: "",
+    role: null,
+    plan: null,
+    status: "Unconfigured",
+    updatedAt: null,
     meta: {
-      appId: "109823475928374",
-      businessAccountId: `waba_${accountId}`,
-      businessPhoneNumberId: `10928374${accountId.slice(0, 7)}`,
-      businessPortfolioId: `portfolio_${accountId}`,
+      appId: null,
+      businessAccountId: null,
+      businessPhoneNumberId: null,
+      businessPortfolioId: null,
       whatsappEndpoint: "https://gateway.superblock.chat/sendWhatsappMessage",
-      hasToken: true,
-      graphApiToken: "EAAQ...9ZBYZD",
+      hasToken: false,
+      graphApiToken: null,
     },
     superblock: {
-      username: cleanId,
-      email: `${cleanId.toLowerCase()}@superblock.chat`,
-      role: "Admin",
-      plan: isSuperblock ? "Enterprise" : "Growth",
+      username: customerId,
+      email: "",
+      role: null,
+      plan: null,
       loginUrl: "https://app.superblock.chat",
     },
     channels: {
-      facebook: {
-        pageId: `fb_${accountId.slice(0, 8)}`,
-        pageName: `${customerName} Official`,
-        endpoint: "https://graph.facebook.com/v20.0",
-        hasToken: true,
-        accessToken: "EAAB...9ZBYZD",
-      },
-      instagram: {
-        username: cleanId.toLowerCase(),
-        endpoint: "https://graph.facebook.com/v20.0",
-        hasToken: true,
-        accessToken: "EAAC...9ZBYZD",
-      },
-      shopify: {
-        apiUrl: `https://${cleanId.toLowerCase()}.myshopify.com`,
-        hasToken: true,
-        adminAccessToken: "shpat_...9ZBYZD",
-      },
+      facebook: null,
+      instagram: null,
+      shopify: null,
     },
   };
 }
@@ -166,7 +147,7 @@ export function buildFallbackCredentials(
  */
 export async function getCustomerCredentials(
   customerId: string,
-  customerName = "SuperBlock Customer"
+  customerName = ""
 ): Promise<CustomerCredentialsData | null> {
   if (!customerId) {
     throw new Error("Customer ID is required");
@@ -186,7 +167,7 @@ export async function getCustomerCredentials(
       }
     }
   } catch (err) {
-    console.warn("Credentials fetch failed (database offline), using fallback credentials:", err);
+    console.warn("Credentials fetch failed, returning unconfigured state:", err);
   }
-  return buildFallbackCredentials(customerId, customerName);
+  return buildUnconfiguredCredentials(customerId, customerName);
 }

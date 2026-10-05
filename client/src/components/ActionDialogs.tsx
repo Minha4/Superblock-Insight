@@ -22,6 +22,7 @@ export interface QuickFormDefaultValues {
   plan?: string;
   description?: string;
   customerId?: string;
+  owner?: string;
 }
 
 export function QuickFormDialog({
@@ -46,7 +47,7 @@ export function QuickFormDialog({
   const [customerEmail, setCustomerEmail] = useState(defaultValues?.email || "");
   const [customerPlan, setCustomerPlan] = useState(defaultValues?.plan || "Growth");
   const [meetingDate, setMeetingDate] = useState("");
-  const [meetingOwner, setMeetingOwner] = useState("Anika Shah");
+  const [meetingOwner, setMeetingOwner] = useState(defaultValues?.owner || "");
   const [invoiceAmount, setInvoiceAmount] = useState("");
   const [invoiceStatus, setInvoiceStatus] = useState("Paid");
   const [invoiceDueDate, setInvoiceDueDate] = useState("");
@@ -58,12 +59,12 @@ export function QuickFormDialog({
       setCustomerEmail(defaultValues?.email || "");
       setCustomerPlan(defaultValues?.plan || "Growth");
       setMeetingDate("");
-      setMeetingOwner("Anika Shah");
+      setMeetingOwner(defaultValues?.owner || "");
       setInvoiceAmount("");
       setInvoiceStatus("Paid");
       setInvoiceDueDate(new Date(Date.now() + 14 * 86400000).toISOString().split("T")[0]);
     }
-  }, [open, defaultValues?.name, defaultValues?.description, defaultValues?.email, defaultValues?.plan]);
+  }, [open, defaultValues?.name, defaultValues?.description, defaultValues?.email, defaultValues?.plan, defaultValues?.owner]);
 
   const save = async () => {
     if (type === "note") {
@@ -283,19 +284,18 @@ export function QuickFormDialog({
       }
       setSaving(true);
       try {
-        const newCust = createCustomer({
+        await createCustomer({
           company: formName.trim(),
           email: customerEmail.trim() || undefined,
           plan: customerPlan,
         });
-        toast.success("Customer created", {
-          description: `${newCust.company} has been added to your customers directory.`,
-        });
-        setOpen(false);
-        setFormName("");
-        setCustomerEmail("");
       } catch (err: any) {
-        toast.error(err?.message || "Failed to create customer");
+        const isUser = title.toLowerCase().includes("user");
+        toast.error(`${isUser ? "User" : "Customer"} creation unavailable`, {
+          description: isUser
+            ? "User accounts are provisioned via Superblock Platform authentication. Direct user creation is not supported in Analytics Studio."
+            : (err?.message || "Customer provisioning is managed directly through Superblock Platform gateway onboarding."),
+        });
       } finally {
         setSaving(false);
       }
@@ -331,16 +331,10 @@ export function QuickFormDialog({
       return;
     }
 
-    setSaving(true);
-    window.setTimeout(() => {
-      setSaving(false);
-      setOpen(false);
-      const isEdit = title.toLowerCase().includes("edit");
-      const entity = title.replace(/^(Add|Create|Edit)\s+/i, "");
-      toast.success(isEdit ? `${entity} updated` : `${entity} saved`, {
-        description: "Your workspace has been updated.",
-      });
-    }, 700);
+    toast.error(`${title} unavailable`, {
+      description: "Direct creation for this record type is not supported by the backend.",
+    });
+    setOpen(false);
   };
 
   return (
@@ -349,7 +343,7 @@ export function QuickFormDialog({
       <DialogContent className="sm:max-w-[520px]">
         <DialogHeader><DialogTitle>{title}</DialogTitle><DialogDescription>{description}</DialogDescription></DialogHeader>
         <div className="grid gap-4 py-1">
-          <div className="grid gap-1.5"><Label htmlFor={`${title}-name`} className="text-xs">{type === "meeting" ? "Meeting title" : type === "note" ? "Note title" : type === "invoice" ? "Invoice number" : type === "customer" ? "Company name" : "Name"}</Label><Input id={`${title}-name`} value={formName} onChange={(e) => setFormName(e.target.value)} placeholder={type === "meeting" ? "Q4 strategy review" : type === "note" ? "Add a clear title" : type === "invoice" ? "INV-2026-002 (optional)" : "Enter a name"} /></div>
+          <div className="grid gap-1.5"><Label htmlFor={`${title}-name`} className="text-xs">{type === "meeting" ? "Meeting title" : type === "note" ? "Note title" : type === "invoice" ? "Invoice number" : type === "customer" ? (title.toLowerCase().includes("user") ? "User / Account name" : "Company name") : "Name"}</Label><Input id={`${title}-name`} value={formName} onChange={(e) => setFormName(e.target.value)} placeholder={type === "meeting" ? "Q4 strategy review" : type === "note" ? "Add a clear title" : type === "invoice" ? "INV-2026-002 (optional)" : (title.toLowerCase().includes("user") ? "Enter user name" : "Enter company name")} /></div>
           {type === "customer" && <div className="grid grid-cols-2 gap-3"><div className="grid gap-1.5"><Label className="text-xs">Contact email</Label><Input type="email" value={customerEmail} onChange={(e) => setCustomerEmail(e.target.value)} placeholder="owner@company.com" /></div><div className="grid gap-1.5"><Label className="text-xs">Plan</Label><Select value={customerPlan} onValueChange={setCustomerPlan}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="Starter">Starter</SelectItem><SelectItem value="Growth">Growth</SelectItem><SelectItem value="Enterprise">Enterprise</SelectItem></SelectContent></Select></div></div>}
           {type === "meeting" && (
             <div className="grid grid-cols-2 gap-3">
@@ -362,15 +356,12 @@ export function QuickFormDialog({
                 />
               </div>
               <div className="grid gap-1.5">
-                <Label className="text-xs">Owner</Label>
-                <Select value={meetingOwner} onValueChange={setMeetingOwner}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Anika Shah">Anika Shah</SelectItem>
-                    <SelectItem value="Karan Mehta">Karan Mehta</SelectItem>
-                    <SelectItem value="Rishi Kapoor">Rishi Kapoor</SelectItem>
-                  </SelectContent>
-                </Select>
+                <Label className="text-xs">Meeting host / owner</Label>
+                <Input
+                  placeholder="Host or team member"
+                  value={meetingOwner}
+                  onChange={(e) => setMeetingOwner(e.target.value)}
+                />
               </div>
             </div>
           )}

@@ -41,7 +41,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { formatCurrency, formatNumber, type Customer } from "@/data/mockData";
+import { formatCurrency, formatNumber } from "@/lib/utils";
+import { type Customer } from "@/types/customer";
 import { useCustomerAnalytics } from "@/lib/api/customerAnalytics";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -194,7 +195,7 @@ export default function Customers() {
           <QuickFormDialog
             type="customer"
             title="Add customer"
-            description="Create a new customer record using mock workspace data."
+            description="Provision a new customer record in the workspace."
             trigger={
               <Button size="sm">
                 <Plus className="size-3.5" />

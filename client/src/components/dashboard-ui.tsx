@@ -49,6 +49,7 @@ const badgeMap: Record<string, string> = {
   Cancelled: "status-danger",
   Expired: "status-danger",
   "Past due": "status-danger",
+  Unconfigured: "status-neutral",
 };
 
 export function StatusBadge({ status, dot = true }: { status: string; dot?: boolean }) {
@@ -125,7 +126,7 @@ export function AnalyticsToolbar({ dateRange, setDateRange, onExport, onRefresh,
         </Select>
         {showCustomer && <Button variant="outline" size="sm" className="h-8 bg-card text-xs"><SlidersHorizontal className="size-3.5" /> Customers <ChevronDown className="size-3" /></Button>}
         <Button variant="outline" size="sm" className="h-8 bg-card text-xs"><BarChart3 className="size-3.5" /> All channels <ChevronDown className="size-3" /></Button>
-        <span className="hidden items-center gap-2 px-2 text-[12px] text-muted-foreground xl:flex"><span className="size-2 rounded-full bg-emerald-500" />Live data simulation</span>
+        <span className="hidden items-center gap-2 px-2 text-[12px] text-muted-foreground xl:flex"><span className="size-2 rounded-full bg-emerald-500" />Connected to Superblock Platform</span>
       </div>
       <div className="flex items-center gap-2">
         <Button variant="outline" size="sm" className="h-8 bg-card text-xs" onClick={onRefresh} disabled={loading}><RefreshCw className={cn("size-3.5", loading && "animate-spin")} /> Refresh</Button>
@@ -163,7 +164,7 @@ export function ErrorState({ onRetry }: { onRetry: () => void }) {
     <div className="flex min-h-[240px] flex-col items-center justify-center px-6 text-center">
       <span className="mb-3 grid size-10 place-items-center rounded-xl border border-rose-200 bg-rose-50 text-rose-600 dark:border-rose-950 dark:bg-rose-950/30"><RefreshCw className="size-4" /></span>
       <h3 className="text-sm font-semibold">Analytics temporarily unavailable</h3>
-      <p className="mt-1 max-w-xs text-xs leading-5 text-muted-foreground">This is a simulated error state. Retry to restore the mock dataset.</p>
+      <p className="mt-1 max-w-xs text-xs leading-5 text-muted-foreground">Analytics service is temporarily unreachable. Please retry.</p>
       <Button variant="outline" size="sm" className="mt-4 h-8 bg-card text-xs" onClick={onRetry}>Try again</Button>
     </div>
   );

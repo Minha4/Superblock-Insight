@@ -42,6 +42,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useApp } from "@/contexts/AppContext";
+import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import {
@@ -115,7 +116,7 @@ export default function Settings() {
     setSettings(next);
     try {
       await saveSettings(next);
-      toast.success("Settings updated successfully");
+      toast.success("Settings saved for this session (database persistence not configured)");
     } catch {
       toast.error("Could not save settings to server");
     }
@@ -196,7 +197,14 @@ function ProfileSection({
   settings: AppSettings;
   onSave: (p: AppSettings["profile"]) => Promise<void>;
 }) {
-  const [profile, setProfile] = useState(settings.profile);
+  const { user } = useAuth();
+  const [profile, setProfile] = useState({
+    fullName: settings.profile.fullName || user?.username || user?.client || "",
+    displayName: settings.profile.displayName || user?.username || "",
+    email: settings.profile.email || user?.email || "",
+    phone: settings.profile.phone || user?.phone || "",
+    timezone: settings.profile.timezone || "utc",
+  });
   const [saving, setSaving] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -206,6 +214,15 @@ function ProfileSection({
     setSaving(false);
   };
 
+  const displayName = profile.displayName || profile.fullName || user?.username || "Authenticated User";
+  const initials = (profile.fullName || user?.username || "SB")
+    .split(/[\s._-]+/)
+    .filter(Boolean)
+    .map((part) => part[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase() || "SB";
+
   return (
     <SettingsCard
       title="Profile"
@@ -213,11 +230,11 @@ function ProfileSection({
     >
       <form onSubmit={handleSubmit} className="space-y-5">
         <div className="flex items-center gap-4 border-b pb-5">
-          <Avatar initials={profile.fullName.slice(0, 2).toUpperCase() || "SB"} size="lg" />
+          <Avatar initials={initials} size="lg" />
           <div>
-            <div className="text-sm font-semibold">{profile.fullName || "User"}</div>
+            <div className="text-sm font-semibold">{displayName}</div>
             <div className="text-[11px] text-muted-foreground">
-              {profile.email} · Superblock HQ
+              {profile.email || user?.email || "No email configured"} · {user?.businessName || settings.workspaceName || "Superblock Workspace"}
             </div>
           </div>
         </div>
@@ -227,15 +244,16 @@ function ProfileSection({
             <Label className="text-xs">Full name</Label>
             <Input
               className="mt-1.5"
+              placeholder={user?.username || "Not configured"}
               value={profile.fullName}
               onChange={(e) => setProfile({ ...profile, fullName: e.target.value })}
-              required
             />
           </div>
           <div>
             <Label className="text-xs">Display name</Label>
             <Input
               className="mt-1.5"
+              placeholder={user?.username || "Not configured"}
               value={profile.displayName}
               onChange={(e) => setProfile({ ...profile, displayName: e.target.value })}
             />
@@ -245,15 +263,16 @@ function ProfileSection({
             <Input
               className="mt-1.5"
               type="email"
+              placeholder={user?.email || "Not configured"}
               value={profile.email}
               onChange={(e) => setProfile({ ...profile, email: e.target.value })}
-              required
             />
           </div>
           <div>
             <Label className="text-xs">Phone</Label>
             <Input
               className="mt-1.5"
+              placeholder={user?.phone || "Not configured"}
               value={profile.phone}
               onChange={(e) => setProfile({ ...profile, phone: e.target.value })}
             />
@@ -268,15 +287,19 @@ function ProfileSection({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
+                <SelectItem value="utc">Coordinated Universal Time (UTC)</SelectItem>
                 <SelectItem value="ist">India Standard Time (GMT+5:30)</SelectItem>
                 <SelectItem value="gst">Gulf Standard Time (GMT+4)</SelectItem>
                 <SelectItem value="sgt">Singapore Time (GMT+8)</SelectItem>
-                <SelectItem value="utc">Coordinated Universal Time (UTC)</SelectItem>
                 <SelectItem value="est">Eastern Standard Time (GMT-5)</SelectItem>
                 <SelectItem value="pst">Pacific Standard Time (GMT-8)</SelectItem>
               </SelectContent>
             </Select>
           </div>
+        </div>
+
+        <div className="rounded-md bg-muted/40 p-3 text-[11px] text-muted-foreground">
+          Note: Changes are saved for the active session. Dedicated database persistence for profile overrides is not currently configured.
         </div>
 
         <div className="flex justify-end border-t pt-5">
@@ -531,41 +554,51 @@ function SecuritySection({
           description="Devices and locations currently signed into your account"
         />
         <div className="mt-2 divide-y rounded-lg border">
-          {security.activeSessions.map((sess) => (
-            <div
-              key={sess.id}
-              className="flex items-center justify-between p-4 text-xs"
-            >
-              <div>
-                <div className="font-medium">
-                  {sess.device}{" "}
-                  {sess.isCurrent && (
-                    <span className="ml-1 rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
-                      Current
-                    </span>
-                  )}
-                </div>
-                <div className="mt-1 text-[11px] text-muted-foreground">
-                  {sess.location} · {sess.lastActive}
-                </div>
-              </div>
-              {sess.isCurrent ? (
-                <Button variant="ghost" size="sm" className="h-7 text-xs" disabled>
-                  Current device
-                </Button>
-              ) : (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 bg-card text-xs text-destructive hover:bg-destructive/10"
-                  onClick={() => handleRevoke(sess.id)}
-                >
-                  Revoke
-                </Button>
-              )}
+          {security.activeSessions.length === 0 ? (
+            <div className="p-6 text-center text-xs text-muted-foreground">
+              No active session telemetry found. Multi-device session tracking is not configured.
             </div>
-          ))}
+          ) : (
+            security.activeSessions.map((sess) => (
+              <div
+                key={sess.id}
+                className="flex items-center justify-between p-4 text-xs"
+              >
+                <div>
+                  <div className="font-medium">
+                    {sess.device}{" "}
+                    {sess.isCurrent && (
+                      <span className="ml-1 rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
+                        Current
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-1 text-[11px] text-muted-foreground">
+                    {sess.location} · {sess.lastActive}
+                  </div>
+                </div>
+                {sess.isCurrent ? (
+                  <Button variant="ghost" size="sm" className="h-7 text-xs" disabled>
+                    Current device
+                  </Button>
+                ) : (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 bg-card text-xs text-destructive hover:bg-destructive/10"
+                    onClick={() => handleRevoke(sess.id)}
+                  >
+                    Revoke
+                  </Button>
+                )}
+              </div>
+            ))
+          )}
         </div>
+      </div>
+
+      <div className="mt-4 rounded-md bg-muted/40 p-3 text-[11px] text-muted-foreground">
+        Note: Security preferences are saved for the active session. Server-side session invalidation and database persistence are not currently configured.
       </div>
 
       <div className="mt-6 flex justify-end border-t pt-5">
@@ -685,6 +718,10 @@ function ApiKeysSection({
         </table>
       </div>
 
+      <div className="mt-4 rounded-md bg-muted/40 p-3 text-[11px] text-muted-foreground">
+        Note: Generated API keys are retained for this browser session. Dedicated database persistence for workspace API keys is not currently configured.
+      </div>
+
       <Dialog open={openDialog} onOpenChange={setOpenDialog}>
         <DialogContent className="max-w-md">
           <DialogHeader>
@@ -769,7 +806,10 @@ function WorkspaceSection({
   settings: AppSettings;
   onSave: (name: string) => Promise<void>;
 }) {
-  const [workspaceName, setWorkspaceName] = useState(settings.workspaceName);
+  const { user } = useAuth();
+  const [workspaceName, setWorkspaceName] = useState(
+    settings.workspaceName || user?.businessName || "Superblock Workspace"
+  );
   const [saving, setSaving] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -789,6 +829,7 @@ function WorkspaceSection({
           <Label className="text-xs">Workspace Name</Label>
           <Input
             className="mt-1.5"
+            placeholder={user?.businessName || "Superblock Workspace"}
             value={workspaceName}
             onChange={(e) => setWorkspaceName(e.target.value)}
             required
@@ -805,6 +846,11 @@ function WorkspaceSection({
             Custom domains can be configured via AWS Route53.
           </p>
         </div>
+
+        <div className="rounded-md bg-muted/40 p-3 text-[11px] text-muted-foreground">
+          Note: Workspace label updates are saved for the active session.
+        </div>
+
         <div className="flex justify-end border-t pt-5">
           <Button type="submit" disabled={saving}>
             <Save className="size-4" />
@@ -817,11 +863,11 @@ function WorkspaceSection({
 }
 
 function GenericSettings({ section }: { section: string }) {
-  const [enabled, setEnabled] = useState(true);
+  const [enabled, setEnabled] = useState(false);
   const [value, setValue] = useState("");
 
   const handleSave = () => {
-    toast.success(`${section} settings saved`);
+    toast.info(`${section} configuration is not currently supported by the backend`);
   };
 
   return (
@@ -834,7 +880,7 @@ function GenericSettings({ section }: { section: string }) {
           <Label className="text-xs">{section} identifier</Label>
           <Input
             className="mt-1.5"
-            placeholder={`Enter ${section.toLowerCase()} details`}
+            placeholder="Not configured"
             value={value}
             onChange={(e) => setValue(e.target.value)}
           />
@@ -843,14 +889,14 @@ function GenericSettings({ section }: { section: string }) {
           <div>
             <div className="text-xs font-medium">Enable {section.toLowerCase()}</div>
             <div className="mt-1 text-[11px] text-muted-foreground">
-              Apply this configuration across the Superblock studio.
+              Configuration is not currently connected to live backend services.
             </div>
           </div>
-          <Switch checked={enabled} onCheckedChange={setEnabled} />
+          <Switch checked={enabled} onCheckedChange={setEnabled} disabled />
         </div>
       </div>
       <div className="mt-6 flex justify-end border-t pt-5">
-        <Button onClick={handleSave}>
+        <Button onClick={handleSave} variant="outline">
           <Save className="size-4" /> Save changes
         </Button>
       </div>

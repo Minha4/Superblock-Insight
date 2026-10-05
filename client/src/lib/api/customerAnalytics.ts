@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { getCurrentUser, fetchAuthSession } from "aws-amplify/auth";
-import { customers as fallbackCustomers, type Customer, type CustomerStatus } from "@/data/mockData";
+import { type Customer, type CustomerStatus } from "@/types/customer";
 import { customerContactsSummary, getCustomerContactCount } from "@/data/customerContactsData";
 
 export interface ApiCustomerRecord {
@@ -137,13 +137,12 @@ export function mapApiUserToCustomer(user: ApiCustomerRecord): Customer {
  * Includes Superblock HQ, SuperBlock, Superblockdemo, Zangos, Spekxo, Adams Properties, etc.
  */
 export const realSuperblockCustomers: Customer[] = Object.entries(customerContactsSummary).map(
-  ([userId, info], index) => {
+  ([userId, info]) => {
     const company = info.customerName || info.clientUserId || "SuperBlock Customer";
     const email = info.clientUserId.includes("@")
       ? info.clientUserId
       : `${info.clientUserId.toLowerCase().replace(/[^a-z0-9]+/g, "")}@superblock.chat`;
     const contactCount = info.contactCount || 0;
-    const isSuperblock = company.toLowerCase().includes("superblock");
 
     return {
       id: userId,
@@ -154,145 +153,56 @@ export const realSuperblockCustomers: Customer[] = Object.entries(customerContac
       contact: {
         name: info.clientUserId || company,
         email,
-        phone: "+91 98460 " + String(10000 + ((index * 247) % 89999)).slice(0, 5),
+        phone: "—",
       },
-      activatedAt: "12 Mar 2025",
+      activatedAt: "—",
       status: "Active" as CustomerStatus,
-      plan: isSuperblock ? "Enterprise" : contactCount > 500 ? "Growth" : "Starter",
+      plan: "—",
       subscription: {
-        status: "Active",
-        startDate: "12 Mar 2025",
-        renewalDate: "12 Mar 2027",
-        billingCycle: "Annual",
-        mrr: Math.max(150, contactCount * 2),
-        contractValue: Math.max(1800, contactCount * 24),
-        paymentStatus: "Current",
+        status: "—",
+        startDate: "—",
+        renewalDate: "—",
+        billingCycle: "—",
+        mrr: 0,
+        contractValue: 0,
+        paymentStatus: "—",
       },
-      renewal: "In 12 mos",
+      renewal: "—",
       usage: {
-        messages: Math.max(120, contactCount * 4),
-        broadcasts: Math.max(5, Math.round(contactCount / 20)),
-        conversations: Math.max(40, Math.round(contactCount * 1.5)),
+        messages: 0,
+        broadcasts: 0,
+        conversations: 0,
         email: 0,
         sms: 0,
-        whatsapp: Math.max(120, contactCount * 4),
-        api: Math.max(200, contactCount * 6),
-        automations: 120,
-        storage: 24,
+        whatsapp: 0,
+        api: 0,
+        automations: 0,
+        storage: 0,
         contacts: contactCount,
       },
-      offerings: [
-        {
-          id: `${userId}-offering-1`,
-          name: "WhatsApp Business API",
-          description: "Official Meta WhatsApp Cloud API messaging delivery and webhooks integration.",
-          status: "Active",
-          startDate: "12 Mar 2025",
-          expiryDate: "12 Mar 2027",
-          quantity: `${Math.max(1, Math.round(contactCount / 500))} WABA numbers`,
-          pricing: "₹4,999 / mo",
-          notes: "Primary broadcast and team inbox channel connected to Superblock platform.",
-          owner: "SuperBlock Platform",
-        },
-        {
-          id: `${userId}-offering-2`,
-          name: "Superblock Team Inbox",
-          description: "Multi-agent shared inbox with live chat routing and customer 360 history.",
-          status: "Active",
-          startDate: "12 Mar 2025",
-          expiryDate: "12 Mar 2027",
-          quantity: "5 Agent Seats",
-          pricing: "₹2,499 / mo",
-          notes: "Real-time conversation management and internal ticketing escalation.",
-          owner: "SuperBlock Support",
-        },
-      ],
-      notes: [
-        {
-          id: `${userId}-note-1`,
-          title: "Account Provisioning & Onboarding",
-          content: `Customer account ${info.clientUserId} successfully onboarded with ${contactCount} verified contacts. Active in SuperBlock Analytics Studio.`,
-          createdBy: "SuperBlock Admin",
-          createdDate: "12 Mar 2025",
-          updatedAt: "12 Mar 2025",
-          category: "General",
-          priority: "Medium",
-        },
-      ],
-      meetings: [
-        {
-          id: `${userId}-meet-1`,
-          date: "14 Mar 2025 · 11:00 AM",
-          title: "Quarterly Growth & Analytics Review",
-          participants: [company, "SuperBlock Customer Success"],
-          owner: "SuperBlock Team",
-          summary: `Reviewed adoption metrics, message broadcast templates, and contact engagement for ${company}.`,
-          decisions: "Agreed to expand monthly broadcast limits and review automated drip campaigns.",
-          actionItems: ["Verify WABA quality rating", "Configure custom Webhook routing"],
-          dueDate: "28 Mar 2025",
-          followUp: "Check template approval status in WhatsApp Manager",
-          status: "Completed",
-        },
-      ],
-      credentials: [
-        {
-          id: `${userId}-cred-1`,
-          type: "Superblock",
-          username: info.clientUserId || company.toLowerCase().replace(/\s+/g, ""),
-          loginUrl: "https://app.superblock.chat",
-          password: "••••••••",
-          updatedAt: "12 Mar 2025",
-          notes: "SuperBlock platform workspace credentials.",
-        },
-        {
-          id: `${userId}-cred-2`,
-          type: "Meta",
-          username: `waba_${info.customerId ? info.customerId.slice(0, 12) : "meta"}`,
-          loginUrl: "https://business.facebook.com",
-          password: "••••••••",
-          updatedAt: "12 Mar 2025",
-          notes: "Meta Business Manager WABA access configuration.",
-        },
-      ],
-      invoices: [
-        {
-          id: `INV-${userId.slice(0, 5).toUpperCase()}-01`,
-          date: "01 Mar 2025",
-          dueDate: "15 Mar 2025",
-          product: "Superblock Growth Subscription",
-          amount: Math.max(150, contactCount * 2),
-          tax: Math.round(Math.max(150, contactCount * 2) * 0.18),
-          total: Math.round(Math.max(150, contactCount * 2) * 1.18),
-          status: "Paid",
-        },
-      ],
-      activities: [
-        {
-          id: `${userId}-act-1`,
-          time: "Today · 10:30",
-          type: "System",
-          title: "Platform usage synced",
-          detail: `${contactCount} contacts synchronized with Superblock analytics`,
-          actor: "System Automation",
-        },
-      ],
+      offerings: [],
+      notes: [],
+      meetings: [],
+      credentials: [],
+      invoices: [],
+      activities: [],
       health: {
-        score: Math.min(98, 78 + Math.round(contactCount / 400)),
-        status: "Healthy",
-        usageTrend: "Increasing",
-        loginFrequency: "Daily",
-        riskReason: "No immediate risks detected",
+        score: 0,
+        status: "—" as any,
+        usageTrend: "Stable",
+        loginFrequency: "—",
+        riskReason: "—",
       },
       owner: {
-        name: "SuperBlock Team",
-        initials: "SB",
+        name: "—",
+        initials: "—",
       },
-      lastActivity: "Today",
+      lastActivity: "—",
     };
   }
 );
 
-export const defaultAllCustomers: Customer[] = [...realSuperblockCustomers, ...fallbackCustomers];
+export const defaultAllCustomers: Customer[] = [...realSuperblockCustomers];
 
 /**
  * Fetches customer analytics data from https://gateway.superblock.chat/customeranalytics
@@ -437,114 +347,18 @@ export function mergeCustomersWithRealData(
 }
 
 export function getCustomCustomers(): Customer[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = localStorage.getItem("sb_custom_customers");
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
+  return [];
 }
 
-export function createCustomer(data: {
+export async function createCustomer(_data: {
   company: string;
   email?: string;
   plan?: string;
   phone?: string;
-}): Customer {
-  const customId = `cust-${Date.now()}`;
-  const company = data.company.trim();
-  const newCust: Customer = {
-    id: customId,
-    company: company,
-    industry: "Enterprise SaaS",
-    region: "ap-south-1",
-    initials: getInitials(company),
-    contact: {
-      name: company,
-      email:
-        data.email?.trim() ||
-        `${company.toLowerCase().replace(/[^a-z0-9]/g, "")}@superblock.chat`,
-      phone: data.phone?.trim() || "+91 98450 00000",
-    },
-    activatedAt: new Date().toLocaleDateString("en-US", {
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-    }),
-    status: "Active" as CustomerStatus,
-    plan: data.plan || "Growth",
-    subscription: {
-      status: "Active",
-      startDate: new Date().toLocaleDateString("en-US", {
-        day: "2-digit",
-        month: "short",
-        year: "numeric",
-      }),
-      renewalDate: "In 12 mos",
-      billingCycle: "Annual",
-      mrr: 2999,
-      contractValue: 35988,
-      paymentStatus: "Current",
-    },
-    renewal: "In 12 mos",
-    usage: {
-      messages: 100,
-      broadcasts: 5,
-      conversations: 25,
-      email: 0,
-      sms: 0,
-      whatsapp: 100,
-      api: 50,
-      automations: 10,
-      storage: 2,
-      contacts: 10,
-    },
-    offerings: [],
-    notes: [],
-    meetings: [],
-    credentials: [],
-    invoices: [],
-    activities: [
-      {
-        id: `act-${Date.now()}`,
-        time: "Just now",
-        type: "System",
-        title: "Customer record created",
-        detail: `New customer ${company} provisioned in Superblock Studio.`,
-        actor: "Admin",
-      },
-    ],
-    health: {
-      score: 85,
-      status: "Healthy",
-      usageTrend: "Stable",
-      loginFrequency: "Daily",
-      riskReason: "None",
-    },
-    owner: {
-      name: "Anika Shah",
-      initials: "AS",
-    },
-    lastActivity: "Just now",
-  };
-
-  if (typeof window !== "undefined") {
-    try {
-      const existing = getCustomCustomers();
-      existing.unshift(newCust);
-      localStorage.setItem("sb_custom_customers", JSON.stringify(existing));
-      window.dispatchEvent(
-        new CustomEvent("customer-operations-updated", {
-          detail: { newCustomer: newCust },
-        })
-      );
-    } catch (e) {
-      console.error("Failed to save custom customer", e);
-    }
-  }
-
-  return newCust;
+}): Promise<never> {
+  throw new Error(
+    "Customer provisioning is managed via Superblock Platform gateway onboarding. Direct customer creation is not supported in Analytics Studio."
+  );
 }
 
 /**
@@ -554,8 +368,7 @@ export function createCustomer(data: {
  */
 export function useCustomerAnalytics() {
   const getMerged = useCallback((apiUsers: ApiCustomerRecord[] = cachedResponse?.users || []) => {
-    const custom = getCustomCustomers();
-    const base = [...custom, ...defaultAllCustomers];
+    const base = [...defaultAllCustomers];
     if (apiUsers && apiUsers.length > 0) {
       return mergeCustomersWithRealData(apiUsers, base);
     }

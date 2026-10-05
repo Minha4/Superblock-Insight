@@ -748,11 +748,11 @@ app.post("/api/gateway-login", async (req, res) => {
 
   let fallbackSettings = {
     profile: {
-      fullName: "Anika Shah",
-      displayName: "Anika",
-      email: "anika@superblock.chat",
-      phone: "+91 98765 43210",
-      timezone: "ist",
+      fullName: "",
+      displayName: "",
+      email: "",
+      phone: "",
+      timezone: "utc",
     },
     notifications: {
       renewalAlerts: true,
@@ -762,17 +762,12 @@ app.post("/api/gateway-login", async (req, res) => {
     },
     security: {
       twoFactorEnabled: false,
-      loginAlerts: true,
+      loginAlerts: false,
       sessionTimeoutHours: "8",
-      activeSessions: [
-        { id: "sess-1", device: "Chrome on macOS", location: "Mumbai, India", lastActive: "Active now", isCurrent: true },
-        { id: "sess-2", device: "Safari on iPhone", location: "Mumbai, India", lastActive: "2 days ago", isCurrent: false },
-      ],
+      activeSessions: [] as { id: string; device: string; location: string; lastActive: string; isCurrent: boolean }[],
     },
-    apiKeys: [
-      { id: "key-1", name: "Production Webhook", keyPrefix: "sb_live_92f...", createdAt: "01 Sep 2026", expiresAt: "01 Sep 2027" },
-    ],
-    workspaceName: "Superblock HQ",
+    apiKeys: [] as { id: string; name: string; keyPrefix: string; createdAt: string; expiresAt: string }[],
+    workspaceName: "Superblock Workspace",
   };
 
   const customerOverrides = new Map<string, any>();

@@ -46,11 +46,11 @@ const STORAGE_KEY = "sb_user_settings";
 
 const defaultSettings: AppSettings = {
   profile: {
-    fullName: "Anika Shah",
-    displayName: "Anika",
-    email: "anika@superblock.chat",
-    phone: "+91 98765 43210",
-    timezone: "ist",
+    fullName: "",
+    displayName: "",
+    email: "",
+    phone: "",
+    timezone: "utc",
   },
   notifications: {
     renewalAlerts: true,
@@ -60,35 +60,12 @@ const defaultSettings: AppSettings = {
   },
   security: {
     twoFactorEnabled: false,
-    loginAlerts: true,
+    loginAlerts: false,
     sessionTimeoutHours: "8",
-    activeSessions: [
-      {
-        id: "sess-1",
-        device: "Chrome on macOS",
-        location: "Mumbai, India",
-        lastActive: "Active now",
-        isCurrent: true,
-      },
-      {
-        id: "sess-2",
-        device: "Safari on iPhone",
-        location: "Mumbai, India",
-        lastActive: "2 days ago",
-        isCurrent: false,
-      },
-    ],
+    activeSessions: [],
   },
-  apiKeys: [
-    {
-      id: "key-1",
-      name: "Production Webhook",
-      keyPrefix: "sb_live_92f...",
-      createdAt: "01 Sep 2026",
-      expiresAt: "01 Sep 2027",
-    },
-  ],
-  workspaceName: "Superblock HQ",
+  apiKeys: [],
+  workspaceName: "Superblock Workspace",
 };
 
 export function loadLocalSettings(): AppSettings {
@@ -100,6 +77,20 @@ export function loadLocalSettings(): AppSettings {
       return defaultSettings;
     }
     const parsed = JSON.parse(raw);
+    if (parsed.profile?.fullName === "Anika Shah") {
+      parsed.profile.fullName = "";
+      parsed.profile.displayName = "";
+      parsed.profile.email = "";
+      parsed.profile.phone = "";
+    }
+    if (Array.isArray(parsed.security?.activeSessions)) {
+      parsed.security.activeSessions = parsed.security.activeSessions.filter(
+        (s: any) => s.id !== "sess-1" && s.id !== "sess-2"
+      );
+    }
+    if (Array.isArray(parsed.apiKeys)) {
+      parsed.apiKeys = parsed.apiKeys.filter((k: any) => k.id !== "key-1");
+    }
     return {
       ...defaultSettings,
       ...parsed,

@@ -118,17 +118,14 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { formatCurrency, formatNumber } from "@/lib/utils";
 import {
-  analyticsSeries,
-  customers as fallbackCustomers,
-  formatCurrency,
-  formatNumber,
   type Activity as CustomerActivity,
   type Customer,
   type Invoice,
   type Note,
   type Offering,
-} from "@/data/mockData";
+} from "@/types/customer";
 import { useCustomerAnalytics, defaultAllCustomers } from "@/lib/api/customerAnalytics";
 import { useCustomerProfile } from "@/lib/api/customerProfile";
 import { useUsageMetrics, type PlatformUsageResponse } from "@/lib/api/usage";
@@ -173,6 +170,7 @@ function formatLastActive(dateStr?: string | null): string {
   }
 }
 
+
 export default function CustomerDetail() {
   const params = useParams<{ id: string }>();
   const { customers: apiCustomers, loading } = useCustomerAnalytics();
@@ -195,7 +193,6 @@ export default function CustomerDetail() {
           item.id.toLowerCase() === params.id?.toLowerCase() ||
           item.company?.toLowerCase() === params.id?.toLowerCase()
       ) ||
-      fallbackCustomers.find((item) => item.id === params.id) ||
       null
     );
   }, [apiCustomers, params.id]);
@@ -345,6 +342,8 @@ export default function CustomerDetail() {
     let activatedAt = rawCustomer.activatedAt;
     let lastActivity = rawCustomer.lastActivity;
     let subscription = { ...rawCustomer.subscription };
+    let owner = { ...rawCustomer.owner };
+
     // Resolve real operational usage data from public.usage_metrics and public.users via useUsageMetrics
     // Zero fake multipliers: if no real operational telemetry is recorded, default cleanly to 0
     const liveMessages = usageData?.metricBreakdown?.messages?.totalValue;
@@ -364,7 +363,6 @@ export default function CustomerDetail() {
       storage: usageData?.metricBreakdown?.storage?.totalValue ?? 0,
       contacts: usageData?.contactsSummary?.totalContacts ?? (rawCustomer.usage?.contacts || 0),
     };
-    let owner = { ...rawCustomer.owner };
 
     if (profile) {
       if (profile.company_name || profile.business_name) {
@@ -439,10 +437,10 @@ export default function CustomerDetail() {
       }
     }
 
-    let activities = rawCustomer.activities || [];
-    let offerings = rawCustomer.offerings || [];
-    let notes = rawCustomer.notes || [];
-    let invoices = rawCustomer.invoices || [];
+    let activities: CustomerActivity[] = [];
+    let offerings: Offering[] = [];
+    let notes: Note[] = [];
+    let invoices: Invoice[] = [];
 
     if (realOperations) {
       // 1. Activities
@@ -606,6 +604,7 @@ export default function CustomerDetail() {
       offerings,
       notes,
       invoices,
+      meetings: [],
     };
   }, [rawCustomer, profile, realOperations, usageData]);
 
@@ -828,7 +827,7 @@ export default function CustomerDetail() {
           <Overview customer={customer} setTab={setTab} usageData={usageData} />
         </TabsContent>
         <TabsContent value="usage" className="mt-4">
-          <Usage customer={customer} />
+          <Usage customer={customer} usageData={usageData} />
         </TabsContent>
         <TabsContent value="offerings" className="mt-4">
           <Offerings customer={customer} onOpen={setOffering} />
@@ -873,11 +872,8 @@ function Overview({
   usageData?: PlatformUsageResponse | null;
 }) {
   const healthParts = [
-    { label: "Adoption", value: customer.health.score > 0 ? 96 : 0 },
-    { label: "Engagement", value: customer.health.score > 0 ? 91 : 0 },
-    { label: "Support", value: customer.health.score > 0 ? 86 : 0 },
     {
-      label: "Payment",
+      label: "Payment standing",
       value:
         customer.subscription.paymentStatus === "Current"
           ? 100
@@ -1247,7 +1243,13 @@ function Snapshot({
   );
 }
 
-function Usage({ customer }: { customer: Customer }) {
+function Usage({
+  customer,
+  usageData,
+}: {
+  customer: Customer;
+  usageData?: PlatformUsageResponse | null;
+}) {
   const [range, setRange] = useState("Last 30 days");
   const channels = [
     {
@@ -1256,8 +1258,8 @@ function Usage({ customer }: { customer: Customer }) {
       color: "var(--whatsapp)",
       detail:
         customer.usage.whatsapp > 0
-          ? "97.8% delivered · 72.4% read"
-          : "0 messages sent",
+          ? `${formatNumber(customer.usage.whatsapp)} messages dispatched`
+          : "0 messages recorded",
     },
     {
       name: "Email",
@@ -1265,8 +1267,8 @@ function Usage({ customer }: { customer: Customer }) {
       color: "var(--email)",
       detail:
         customer.usage.email > 0
-          ? "96.1% delivered · 38.7% opened"
-          : "0 emails sent",
+          ? `${formatNumber(customer.usage.email)} emails dispatched`
+          : "0 emails recorded",
     },
     {
       name: "SMS",
@@ -1274,19 +1276,47 @@ function Usage({ customer }: { customer: Customer }) {
       color: "var(--sms)",
       detail:
         customer.usage.sms > 0
-          ? "94.8% delivered · 1.9% failed"
-          : "0 SMS sent",
+          ? `${formatNumber(customer.usage.sms)} SMS dispatched`
+          : "0 SMS recorded",
     },
     {
       name: "Broadcast",
-      value: customer.usage.broadcasts * 1000,
+      value: customer.usage.broadcasts,
       color: "var(--broadcast)",
       detail:
         customer.usage.broadcasts > 0
-          ? `${customer.usage.broadcasts} campaigns · 68.2% read`
-          : "0 campaigns run",
+          ? `${formatNumber(customer.usage.broadcasts)} campaigns run`
+          : "0 campaigns recorded",
     },
   ];
+
+  const channelTrendSeries = useMemo(() => {
+    if (!usageData?.usageMetrics || usageData.usageMetrics.length === 0) {
+      return [];
+    }
+    const dateMap = new Map<string, { date: string; whatsapp: number; email: number; sms: number }>();
+    for (const record of usageData.usageMetrics) {
+      if (!record.recorded_at) continue;
+      const d = new Date(record.recorded_at);
+      const dateStr = isNaN(d.getTime())
+        ? record.recorded_at.slice(0, 10)
+        : d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      if (!dateMap.has(dateStr)) {
+        dateMap.set(dateStr, { date: dateStr, whatsapp: 0, email: 0, sms: 0 });
+      }
+      const entry = dateMap.get(dateStr)!;
+      const val = Number(record.metric_value) || 0;
+      const mName = (record.metric_name || "").toLowerCase();
+      if (mName.includes("whatsapp") || mName.includes("messages")) {
+        entry.whatsapp += val;
+      } else if (mName.includes("email")) {
+        entry.email += val;
+      } else if (mName.includes("sms")) {
+        entry.sms += val;
+      }
+    }
+    return Array.from(dateMap.values());
+  }, [usageData]);
 
   return (
     <div className="space-y-4">
@@ -1363,13 +1393,13 @@ function Usage({ customer }: { customer: Customer }) {
         <div className="panel p-4">
           <SectionHeader
             title="Channel usage trend"
-            description={`${range} · thousands of events`}
+            description={`${range} · live operational telemetry`}
           />
-          {customer.usage.messages > 0 ? (
+          {channelTrendSeries.length > 0 ? (
             <div className="h-[300px]">
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart
-                  data={analyticsSeries}
+                  data={channelTrendSeries}
                   margin={{ top: 10, right: 5, left: -22, bottom: 0 }}
                 >
                   <CartesianGrid
@@ -1389,7 +1419,7 @@ function Usage({ customer }: { customer: Customer }) {
                     tickLine={false}
                     tick={{ fontSize: 9, fill: "var(--muted-foreground)" }}
                   />
-                  <RechartsTooltip content={<SimpleTooltip suffix="k" />} />
+                  <RechartsTooltip content={<SimpleTooltip suffix="" />} />
                   <Area
                     dataKey="whatsapp"
                     name="WhatsApp"
@@ -1423,7 +1453,7 @@ function Usage({ customer }: { customer: Customer }) {
             <div className="flex h-[300px] flex-col items-center justify-center text-center text-muted-foreground">
               <Activity className="mb-2 size-8 opacity-40" />
               <span className="text-xs font-medium">
-                No channel usage events in this period
+                No channel usage telemetry recorded for this timeframe
               </span>
               <p className="mt-1 max-w-xs text-[11px] text-muted-foreground/70">
                 Channel time-series analytics will populate as customer broadcasts, conversations, and automated workflows are dispatched.
@@ -1440,25 +1470,33 @@ function Usage({ customer }: { customer: Customer }) {
             {[
               [
                 "Messages",
-                customer.usage.messages > 0 ? 78 : 0,
+                customer.usage.messages > 0
+                  ? Math.min(100, Math.round((customer.usage.messages / 1250000) * 100))
+                  : 0,
                 formatNumber(customer.usage.messages),
                 "1.25M",
               ],
               [
                 "Automation executions",
-                customer.usage.automations > 0 ? 66 : 0,
+                customer.usage.automations > 0
+                  ? Math.min(100, Math.round((customer.usage.automations / 2500) * 100))
+                  : 0,
                 formatNumber(customer.usage.automations),
                 "2.5K",
               ],
               [
                 "API requests",
-                customer.usage.api > 0 ? 84 : 0,
+                customer.usage.api > 0
+                  ? Math.min(100, Math.round((customer.usage.api / 2200000) * 100))
+                  : 0,
                 formatNumber(customer.usage.api),
                 "2.2M",
               ],
               [
                 "Storage",
-                customer.usage.storage > 0 ? 42 : 0,
+                customer.usage.storage > 0
+                  ? Math.min(100, Math.round((customer.usage.storage / 100) * 100))
+                  : 0,
                 `${customer.usage.storage} GB`,
                 "100 GB",
               ],
@@ -1505,31 +1543,25 @@ function Usage({ customer }: { customer: Customer }) {
               </tr>
             </thead>
             <tbody>
-              {channels.map((channel, index) => (
+              {channels.map((channel) => (
                 <tr key={channel.name}>
                   <td className="font-medium">{channel.name}</td>
                   <td className="text-right font-tabular">
                     {formatNumber(channel.value)}
                   </td>
                   <td className="text-right font-tabular">
-                    {channel.value > 0
-                      ? formatNumber(Math.round(channel.value * (0.95 + index * 0.005)))
-                      : "0"}
+                    {channel.value > 0 ? formatNumber(channel.value) : "0"}
                   </td>
-                  <td className="text-right font-tabular">
-                    {channel.value > 0
-                      ? formatNumber(Math.round(channel.value * (0.37 + index * 0.06)))
-                      : "0"}
+                  <td className="text-right font-tabular text-muted-foreground">
+                    —
                   </td>
-                  <td className="text-right font-tabular">
-                    {channel.value > 0
-                      ? formatNumber(Math.round(channel.value * 0.022))
-                      : "0"}
+                  <td className="text-right font-tabular text-muted-foreground">
+                    —
                   </td>
                   <td>
                     {channel.value > 0 ? (
                       <span className="inline-flex items-center gap-1 text-emerald-600">
-                        <TrendingUp className="size-3" />+{8 + index * 3}.2%
+                        <TrendingUp className="size-3" /> Recorded
                       </span>
                     ) : (
                       <span className="text-muted-foreground">—</span>
@@ -1584,9 +1616,9 @@ function Offerings({
     return () => window.removeEventListener("customer-offering-created", handleCreated);
   }, [customer.id, fetchOfferings]);
 
-  // Combine real database offerings with customer prop fallback
+  // Real database offerings from Supabase public.customer_offerings
   const offerings: Offering[] = useMemo(() => {
-    const listFromDb: Offering[] = dbOfferings.map((co) => ({
+    return dbOfferings.map((co) => ({
       id: co.id,
       name: co.offering_name || "Custom Offering",
       description: `Provisioned service for ${customer.company}`,
@@ -1598,14 +1630,7 @@ function Offerings({
       notes: "Provisioned via Analytics Studio",
       owner: "SuperBlock Platform",
     }));
-
-    const baseOfferings = customer.offerings || [];
-    if (listFromDb.length > 0) {
-      const dbIds = new Set(listFromDb.map((o) => o.id));
-      return [...listFromDb, ...baseOfferings.filter((b) => !dbIds.has(b.id))];
-    }
-    return baseOfferings;
-  }, [dbOfferings, customer.offerings, customer.company]);
+  }, [dbOfferings, customer.company]);
 
   return (
     <div>
@@ -1725,8 +1750,9 @@ function Notes({ customer }: { customer: Customer }) {
     };
   }, [fetchNotes, customer.id]);
 
+  // Only real database notes from Supabase public.customer_notes
   const notes: Note[] = useMemo(() => {
-    const realList: Note[] = dbNotes.map((n) => ({
+    return dbNotes.map((n) => ({
       id: n.id,
       title: n.title || "Customer Note",
       content: n.content || "",
@@ -1752,15 +1778,7 @@ function Notes({ customer }: { customer: Customer }) {
             year: "numeric",
           }) : "—"),
     }));
-
-    const baseNotes = customer.notes || [];
-    if (realList.length > 0) {
-      const realIds = new Set(realList.map((n) => n.id));
-      return [...realList, ...baseNotes.filter((bn) => !realIds.has(bn.id))];
-    }
-
-    return baseNotes;
-  }, [dbNotes, customer.notes]);
+  }, [dbNotes]);
 
   const handleDelete = async (noteId: string) => {
     try {
@@ -2194,39 +2212,37 @@ function Meetings({ customer }: { customer: Customer }) {
     }
   };
 
+  // Only real database meetings from Supabase public.customer_meetings
   const meetings = useMemo(() => {
-    if (dbMeetings.length > 0) {
-      return dbMeetings.map((m) => {
-        let dateStr = "—";
-        if (m.meeting_date) {
-          try {
-            dateStr = new Date(m.meeting_date).toLocaleDateString("en-US", {
-              day: "2-digit",
-              month: "short",
-              year: "numeric",
-            });
-          } catch {
-            dateStr = String(m.meeting_date);
-          }
+    return dbMeetings.map((m) => {
+      let dateStr = "—";
+      if (m.meeting_date) {
+        try {
+          dateStr = new Date(m.meeting_date).toLocaleDateString("en-US", {
+            day: "2-digit",
+            month: "short",
+            year: "numeric",
+          });
+        } catch {
+          dateStr = String(m.meeting_date);
         }
-        return {
-          id: m.id,
-          title: m.title || "Meeting",
-          status: (m.status || "Scheduled") as any,
-          date: dateStr,
-          rawDate: m.meeting_date || "",
-          owner: m.created_by || "Team Member",
-          summary: m.description || "Discussion recorded.",
-          decisions: "Key details and commitments noted in description.",
-          actionItems: [] as string[],
-          participants: [m.created_by || "Team"],
-          dueDate: dateStr,
-          followUp: "—",
-        };
-      });
-    }
-    return customer.meetings || [];
-  }, [dbMeetings, customer.meetings]);
+      }
+      return {
+        id: m.id,
+        title: m.title || "Meeting",
+        status: (m.status || "Scheduled") as any,
+        date: dateStr,
+        rawDate: m.meeting_date || "",
+        owner: m.created_by || "Team Member",
+        summary: m.description || "Discussion recorded.",
+        decisions: "Key details and commitments noted in description.",
+        actionItems: [] as string[],
+        participants: [m.created_by || "Team"],
+        dueDate: dateStr,
+        followUp: "—",
+      };
+    });
+  }, [dbMeetings]);
 
   return (
     <div>
@@ -2605,7 +2621,7 @@ function Credentials({ customer }: { customer: Customer }) {
         <div>
           <div className="flex items-center gap-2">
             <h2 className="text-base font-semibold">Customer credentials & integrations</h2>
-            <StatusBadge status={metaConfigured ? "Active" : "Partial"} />
+            <StatusBadge status={metaConfigured ? "Active" : (data.status === "Unconfigured" ? "Unconfigured" : "Partial")} />
           </div>
           <p className="mt-1 text-xs text-muted-foreground">
             Live operational access keys, Meta WhatsApp Cloud API IDs, and SuperBlock platform accounts.
@@ -2647,7 +2663,7 @@ function Credentials({ customer }: { customer: Customer }) {
                 </div>
               </div>
             </div>
-            <StatusBadge status={metaConfigured ? "Active" : "Partial"} />
+            <StatusBadge status={metaConfigured ? "Active" : (data.status === "Unconfigured" ? "Unconfigured" : "Partial")} />
           </div>
 
           <div className="mt-4 divide-y rounded-lg border bg-muted/10">
@@ -2755,7 +2771,7 @@ function Credentials({ customer }: { customer: Customer }) {
                 </div>
               </div>
             </div>
-            <StatusBadge status="Active" />
+            <StatusBadge status={data.status === "Unconfigured" ? "Unconfigured" : "Active"} />
           </div>
 
           <div className="mt-4 divide-y rounded-lg border bg-muted/10">
@@ -2865,7 +2881,7 @@ function Credentials({ customer }: { customer: Customer }) {
           <CopyButton value={curlTestSnippet} />
         </div>
         <div className="mt-3 overflow-x-auto rounded-lg bg-zinc-950 p-3 text-[11px] font-mono leading-5 text-zinc-200">
-          <pre>{curlTestSnippet}</pre>
+          <pre>{metaConfigured ? curlTestSnippet : `# WhatsApp Cloud API not configured yet for ${customer.company}\n# Assign a Business Phone Number ID and Graph API token to enable live dispatch testing`}</pre>
         </div>
       </div>
     </div>
@@ -3012,16 +3028,8 @@ function Billing({
       }
     }
 
-    if (Array.isArray(customer.invoices)) {
-      for (const inv of customer.invoices) {
-        if (!inv?.id || seenIds.has(inv.id)) continue;
-        seenIds.add(inv.id);
-        list.push(inv);
-      }
-    }
-
     return list;
-  }, [dbInvoices, customer.invoices]);
+  }, [dbInvoices]);
 
   const lifetimeBilled = invoices.reduce((sum, item) => sum + item.total, 0);
 
