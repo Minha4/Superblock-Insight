@@ -127,8 +127,8 @@ import {
   type Note,
   type Offering,
 } from "@/types/customer";
-import { useCustomerAnalytics, defaultAllCustomers } from "@/lib/api/customerAnalytics";
-import { useCustomerProfile } from "@/lib/api/customerProfile";
+import { useCustomerAnalytics, defaultAllCustomers, type ApiCustomerRecord } from "@/lib/api/customerAnalytics";
+import { useCustomerProfile, type CustomerProfileData } from "@/lib/api/customerProfile";
 import { useUsageMetrics, useBroadcastUsage, type PlatformUsageResponse } from "@/lib/api/usage";
 import { fetchAuthSession } from "aws-amplify/auth";
 import { toast } from "sonner";
@@ -174,7 +174,7 @@ function formatLastActive(dateStr?: string | null): string {
 
 export default function CustomerDetail() {
   const params = useParams<{ id: string }>();
-  const { customers: apiCustomers, loading } = useCustomerAnalytics();
+  const { customers: apiCustomers, rawUsers, loading } = useCustomerAnalytics();
   const [tab, setTab] = useState("overview");
   const [offering, setOffering] = useState<Offering | null>(null);
   const [invoice, setInvoice] = useState<Invoice | null>(null);
@@ -197,6 +197,30 @@ export default function CustomerDetail() {
       null
     );
   }, [apiCustomers, params.id]);
+
+  const matchingRawUser = useMemo(() => {
+    if (!rawCustomer?.id || !rawUsers || rawUsers.length === 0) return null;
+    const targetId = rawCustomer.id.toLowerCase();
+    const targetName = (rawCustomer.company || "").toLowerCase();
+    const targetContact = (rawCustomer.contact?.name || "").toLowerCase();
+    const targetEmail = (rawCustomer.contact?.email || "").toLowerCase();
+    return (
+      rawUsers.find((u) => {
+        if (!u) return false;
+        const uId = (u.user_id || "").toLowerCase();
+        const uName = (u.user_name || "").toLowerCase();
+        const uEmail = (u.user_email || u.email || "").toLowerCase();
+        const uBiz = (u.business_name || "").toLowerCase();
+        return (
+          uId === targetId ||
+          uName === targetId ||
+          (uName && (uName === targetContact || uName === targetName)) ||
+          (uBiz && uBiz === targetName) ||
+          (targetEmail !== "—" && uEmail && uEmail === targetEmail)
+        );
+      }) || null
+    );
+  }, [rawCustomer?.id, rawCustomer?.company, rawCustomer?.contact?.name, rawCustomer?.contact?.email, rawUsers]);
 
   const { profile } = useCustomerProfile(rawCustomer?.id);
   const { data: usageData } = useUsageMetrics(rawCustomer?.id);
@@ -948,7 +972,12 @@ export default function CustomerDetail() {
           <Meetings key={customer.id} customer={customer} />
         </TabsContent>
         <TabsContent value="credentials" className="mt-4">
-          <Credentials customer={customer} />
+          <Credentials
+            customer={customer}
+            rawCustomer={rawCustomer}
+            rawUser={matchingRawUser}
+            profile={profile}
+          />
         </TabsContent>
         <TabsContent value="billing" className="mt-4">
           <Billing customer={customer} onInvoice={setInvoice} />
@@ -2636,7 +2665,17 @@ function MeetingRow({
   );
 }
 
-function Credentials({ customer }: { customer: Customer }) {
+function Credentials({
+  customer,
+  rawCustomer,
+  rawUser,
+  profile,
+}: {
+  customer: Customer;
+  rawCustomer?: Customer | null;
+  rawUser?: ApiCustomerRecord | null;
+  profile?: CustomerProfileData | null;
+}) {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<CustomerCredentialsData | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -2651,7 +2690,17 @@ function Credentials({ customer }: { customer: Customer }) {
         setLoading(true);
       }
       setError(null);
-      const res = await getCustomerCredentials(customer.id);
+      const res = await getCustomerCredentials(customer.id, customer.company, {
+        id: customer.id,
+        company: customer.company,
+        contact: customer.contact,
+        plan: customer.plan,
+        owner: customer.owner,
+        activatedAt: customer.activatedAt,
+        rawUser,
+        rawCustomer,
+        profile,
+      });
       setData(res);
       if (isManualRefresh) {
         toast.success("Credentials refreshed from database");
@@ -2666,7 +2715,17 @@ function Credentials({ customer }: { customer: Customer }) {
       setLoading(false);
       setIsRefreshing(false);
     }
-  }, [customer.id]);
+  }, [
+    customer.id,
+    customer.company,
+    customer.contact,
+    customer.plan,
+    customer.owner,
+    customer.activatedAt,
+    rawUser,
+    rawCustomer,
+    profile,
+  ]);
 
   useEffect(() => {
     loadData();

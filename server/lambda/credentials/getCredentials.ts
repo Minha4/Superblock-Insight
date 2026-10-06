@@ -1,4 +1,5 @@
-import { query } from "../db";
+import { operationalQuery, query } from "../db";
+import type { QueryResult, QueryResultRow } from "pg";
 import type {
   APIGatewayProxyEvent,
   APIGatewayProxyResult,
@@ -10,6 +11,25 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Headers": "Content-Type,Authorization,X-Amz-Date,X-Api-Key",
   "Access-Control-Allow-Methods": "GET,OPTIONS",
 };
+
+/**
+ * Safely executes a read-only query against the SuperBlock operational database ('superblockhq'),
+ * falling back to the standard query pool if operational pool is not configured or fails.
+ */
+async function executeCredentialsQuery<T extends QueryResultRow = any>(
+  text: string,
+  params?: any[]
+): Promise<QueryResult<T>> {
+  try {
+    return await operationalQuery<T>(text, params);
+  } catch (opErr: any) {
+    try {
+      return await query<T>(text, params);
+    } catch {
+      throw opErr;
+    }
+  }
+}
 
 export interface CustomerCredentialsPayload {
   customerId: string;
@@ -152,12 +172,41 @@ export async function getCredentialsHandler(
 
     let row: any = null;
     try {
-      const result = await query<any>(sql, [customerId]);
+      const result = await executeCredentialsQuery<any>(sql, [customerId]);
       if (result.rows.length > 0) {
         row = result.rows[0];
       }
-    } catch (dbErr) {
-      console.warn("Could not query public.users for credentials, using standard operational profile:", dbErr);
+    } catch {
+      // If multi-column join fails (e.g. some optional channel columns absent), attempt core users query
+      try {
+        const coreSql = `
+          SELECT
+            u.user_id::text,
+            u.user_name,
+            u.user_email,
+            u.email,
+            u.role,
+            u.plan,
+            u.business_account_id,
+            u.business_phone_number_id,
+            u.business_portfolio_id,
+            u.whatsapp_endpoint,
+            u.graph_api_token,
+            u.updated_at
+          FROM public.users u
+          WHERE u.user_id::text = $1
+             OR LOWER(u.user_name) = LOWER($1)
+             OR LOWER(u.user_email) = LOWER($1)
+             OR LOWER(u.email) = LOWER($1)
+          LIMIT 1;
+        `;
+        const coreResult = await executeCredentialsQuery<any>(coreSql, [customerId]);
+        if (coreResult.rows.length > 0) {
+          row = coreResult.rows[0];
+        }
+      } catch (dbErr) {
+        console.warn("Could not query operational database for customer credentials:", dbErr);
+      }
     }
 
     if (!row) {
