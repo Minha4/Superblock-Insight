@@ -60,10 +60,12 @@ def get_credentials():
         ctypes.windll.advapi32.CredFree(pcred)
 
         con = sqlite3.connect(r'C:\Users\Dell\AppData\Roaming\pgadmin\pgadmin4.db')
-        host, port, _maint_db, user, hex_enc_pass = con.cursor().execute(
+        row = con.cursor().execute(
             "SELECT host, port, maintenance_db, username, password FROM server WHERE name='superblock'"
         ).fetchone()
-        password = decrypt(bytes.fromhex(hex_enc_pass).decode('utf-8'), master_key).decode('utf-8')
+        if row:
+            host, port, _maint_db, user, hex_enc_pass = row
+            password = decrypt(bytes.fromhex(hex_enc_pass).decode('utf-8'), master_key).decode('utf-8')
         con.close()
         dbname = os.environ.get("PGDATABASE", "superblockhq")
 

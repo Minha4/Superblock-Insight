@@ -46,6 +46,7 @@ import { getBroadcastUsageHandler } from "./usageMetrics/getBroadcastUsage";
 import { getActivitiesHandler } from "./activities/getActivities";
 import { createActivityHandler } from "./activities/createActivity";
 import { getCredentialsHandler } from "./credentials/getCredentials";
+import { getCustomerOperations } from "../analyticsDb";
 
 export * from "./types";
 export * from "./db";
@@ -556,6 +557,48 @@ export async function handler(
       (method === "GET" && (action === "credentials" || action === "get_credentials"))
     ) {
       return await getCredentialsHandler(event);
+    }
+
+    // 15. Customer Operations API (Activities, Products, Deals, Tasks, Tickets, Contact Groups, Notes)
+    if (
+      (method === "GET" &&
+        (rawPath.endsWith("/customer-operations") ||
+          rawPath.includes("/customer-operations/") ||
+          rawPath.endsWith("/customer_operations") ||
+          rawPath.includes("/customer_operations/"))) ||
+      (method === "GET" &&
+        (action === "customer_operations" ||
+          action === "customer-operations" ||
+          action === "customeroperations" ||
+          action === "operations"))
+    ) {
+      const customerId = (
+        event.queryStringParameters?.customerId ||
+        event.queryStringParameters?.customer_id ||
+        event.queryStringParameters?.clientUserId ||
+        event.queryStringParameters?.client_user_id ||
+        event.queryStringParameters?.userId ||
+        event.queryStringParameters?.user_id ||
+        event.pathParameters?.customerId ||
+        event.pathParameters?.id ||
+        ""
+      ).trim();
+      const customerName = (
+        event.queryStringParameters?.customerName ||
+        event.queryStringParameters?.customer_name ||
+        ""
+      ).trim();
+
+      const ops = await getCustomerOperations(customerId, customerName);
+      return {
+        statusCode: 200,
+        headers: CORS_HEADERS,
+        body: JSON.stringify({
+          success: true,
+          customerId: customerId || undefined,
+          ...ops,
+        }),
+      };
     }
 
     // Fallback 404

@@ -261,6 +261,8 @@ export default function CustomerDetail() {
 
   const [realOperations, setRealOperations] = useState<CustomerOperationsPayload | null>(null);
   const [customerMetadata, setCustomerMetadata] = useState<CustomerMetadataRecord | null>(null);
+  const [dbMeetings, setDbMeetings] = useState<MeetingRecord[]>([]);
+  const [dbSubscriptions, setDbSubscriptions] = useState<SubscriptionRecord[]>([]);
   const [operationsRefreshKey, setOperationsRefreshKey] = useState(0);
 
   useEffect(() => {
@@ -268,8 +270,14 @@ export default function CustomerDetail() {
       setOperationsRefreshKey((k) => k + 1);
     };
     window.addEventListener("customer-operations-updated", onOperationsUpdated);
+    window.addEventListener("customer-meeting-created", onOperationsUpdated);
+    window.addEventListener("customer-offering-created", onOperationsUpdated);
+    window.addEventListener("customer-invoice-created", onOperationsUpdated);
     return () => {
       window.removeEventListener("customer-operations-updated", onOperationsUpdated);
+      window.removeEventListener("customer-meeting-created", onOperationsUpdated);
+      window.removeEventListener("customer-offering-created", onOperationsUpdated);
+      window.removeEventListener("customer-invoice-created", onOperationsUpdated);
     };
   }, []);
 
@@ -278,6 +286,8 @@ export default function CustomerDetail() {
     if (!rawCustomer?.id) {
       setRealOperations(null);
       setCustomerMetadata(null);
+      setDbMeetings([]);
+      setDbSubscriptions([]);
       return;
     }
 
@@ -320,6 +330,26 @@ export default function CustomerDetail() {
           }
         } catch (metaErr) {
           console.warn("Could not fetch customer metadata:", metaErr);
+        }
+
+        // Fetch real meetings from Supabase public.meetings
+        try {
+          const meetings = await getCustomerMeetings(customerId);
+          if (!cancelled && Array.isArray(meetings)) {
+            setDbMeetings(meetings);
+          }
+        } catch (mErr) {
+          console.warn("Could not fetch meetings from meetings API:", mErr);
+        }
+
+        // Fetch real subscriptions from Supabase public.subscriptions
+        try {
+          const subs = await getCustomerSubscriptions(customerId);
+          if (!cancelled && Array.isArray(subs)) {
+            setDbSubscriptions(subs);
+          }
+        } catch (sErr) {
+          console.warn("Could not fetch subscriptions from billing API:", sErr);
         }
 
         if (!cancelled) {
@@ -618,6 +648,52 @@ export default function CustomerDetail() {
       }
     }
 
+    // Incorporate real active subscription data from Supabase public.subscriptions
+    const activeSub = dbSubscriptions.length > 0 ? dbSubscriptions[0] : null;
+    if (activeSub) {
+      if (activeSub.plan_name) plan = activeSub.plan_name;
+      if (activeSub.status) subscription.status = activeSub.status;
+      if (activeSub.current_period_start) subscription.startDate = activeSub.current_period_start;
+      if (activeSub.current_period_end) subscription.renewalDate = activeSub.current_period_end;
+      if (activeSub.mrr) {
+        const parsedMrr = Number(activeSub.mrr);
+        if (!isNaN(parsedMrr) && parsedMrr > 0) {
+          subscription.mrr = parsedMrr;
+          subscription.contractValue = parsedMrr * 12;
+        }
+      }
+    }
+
+    // Map real meetings from Supabase public.meetings
+    const mappedMeetings = dbMeetings.map((m) => {
+      let dateStr = "—";
+      if (m.meeting_date) {
+        try {
+          dateStr = new Date(m.meeting_date).toLocaleDateString("en-US", {
+            day: "2-digit",
+            month: "short",
+            year: "numeric",
+          });
+        } catch {
+          dateStr = String(m.meeting_date);
+        }
+      }
+      return {
+        id: m.id,
+        title: m.title || "Meeting",
+        status: (m.status || "Scheduled") as any,
+        date: dateStr,
+        rawDate: m.meeting_date || "",
+        owner: m.created_by || "Team Member",
+        summary: m.description || "Discussion recorded.",
+        decisions: "Key details and commitments noted in description.",
+        actionItems: [] as string[],
+        participants: [m.created_by || "Team"],
+        dueDate: dateStr,
+        followUp: "—",
+      };
+    });
+
     return {
       ...rawCustomer,
       company,
@@ -635,9 +711,9 @@ export default function CustomerDetail() {
       offerings,
       notes,
       invoices,
-      meetings: [],
+      meetings: mappedMeetings,
     };
-  }, [rawCustomer, profile, realOperations, usageData, customerMetadata]);
+  }, [rawCustomer, profile, realOperations, usageData, customerMetadata, dbMeetings, dbSubscriptions]);
 
   const exportCustomer = () => {
     if (!customer) return;
@@ -1649,9 +1725,9 @@ function Offerings({
     return () => window.removeEventListener("customer-offering-created", handleCreated);
   }, [customer.id, fetchOfferings]);
 
-  // Real database offerings from Supabase public.customer_offerings
+  // Real database offerings from Supabase public.customer_offerings combined with operational customer_products
   const offerings: Offering[] = useMemo(() => {
-    return dbOfferings.map((co) => ({
+    const supabaseOfferings = dbOfferings.map((co) => ({
       id: co.id,
       name: co.offering_name || "Custom Offering",
       description: `Provisioned service for ${customer.company}`,
@@ -1663,7 +1739,12 @@ function Offerings({
       notes: "Provisioned via Analytics Studio",
       owner: "SuperBlock Platform",
     }));
-  }, [dbOfferings, customer.company]);
+
+    const existingIds = new Set(supabaseOfferings.map((o) => o.id));
+    const operationalProducts = (customer.offerings || []).filter((p) => !existingIds.has(p.id));
+
+    return [...supabaseOfferings, ...operationalProducts];
+  }, [dbOfferings, customer.company, customer.offerings]);
 
   return (
     <div>
@@ -3061,8 +3142,17 @@ function Billing({
       }
     }
 
+    // Also include any deal invoices from operational PostgreSQL
+    if (Array.isArray(customer.invoices) && customer.invoices.length > 0) {
+      for (const opInv of customer.invoices) {
+        if (!opInv.id || seenIds.has(opInv.id)) continue;
+        seenIds.add(opInv.id);
+        list.push(opInv);
+      }
+    }
+
     return list;
-  }, [dbInvoices]);
+  }, [dbInvoices, customer.invoices]);
 
   const lifetimeBilled = invoices.reduce((sum, item) => sum + item.total, 0);
 
