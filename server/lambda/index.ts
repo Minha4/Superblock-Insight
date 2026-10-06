@@ -42,6 +42,7 @@ import { deletePlanHandler } from "./plans/deletePlan";
 import { getUsageMetricsHandler } from "./usageMetrics/getUsageMetrics";
 import { createUsageMetricHandler } from "./usageMetrics/createUsageMetric";
 import { getDynamoMessagesUsageHandler } from "./usageMetrics/getDynamoMessagesUsage";
+import { getBroadcastUsageHandler } from "./usageMetrics/getBroadcastUsage";
 import { getActivitiesHandler } from "./activities/getActivities";
 import { createActivityHandler } from "./activities/createActivity";
 import { getCredentialsHandler } from "./credentials/getCredentials";
@@ -94,6 +95,7 @@ export { deletePlanHandler } from "./plans/deletePlan";
 export { getUsageMetricsHandler } from "./usageMetrics/getUsageMetrics";
 export { createUsageMetricHandler } from "./usageMetrics/createUsageMetric";
 export { getDynamoMessagesUsageHandler } from "./usageMetrics/getDynamoMessagesUsage";
+export { getBroadcastUsageHandler } from "./usageMetrics/getBroadcastUsage";
 export { getActivitiesHandler } from "./activities/getActivities";
 export { createActivityHandler } from "./activities/createActivity";
 
@@ -455,6 +457,28 @@ export async function handler(
       (rawPath.endsWith("/plans") || rawPath.includes("/plans/"))
     ) {
       return await deletePlanHandler(event);
+    }
+
+    // 12a. Broadcasts Usage API (Source of truth: PostgreSQL operational database public.broadcasts)
+    if (
+      (method === "GET" &&
+        (rawPath.endsWith("/usage-metrics/broadcasts") ||
+          rawPath.includes("/usage-metrics/broadcasts/") ||
+          rawPath.endsWith("/broadcast-usage") ||
+          rawPath.includes("/broadcast-usage/") ||
+          rawPath.endsWith("/broadcasts-usage") ||
+          rawPath.includes("/broadcasts-usage/") ||
+          rawPath.endsWith("/broadcasts") ||
+          rawPath.includes("/broadcasts/"))) ||
+      (method === "GET" &&
+        (action === "broadcast_usage" ||
+          action === "broadcast-usage" ||
+          action === "broadcasts_usage" ||
+          action === "broadcasts-usage" ||
+          action === "broadcasts" ||
+          action === "broadcast"))
+    ) {
+      return await getBroadcastUsageHandler(event);
     }
 
     // 12. Usage Metrics API (Source of truth: AWS DynamoDB Messages table)

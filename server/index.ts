@@ -44,6 +44,7 @@ import { updateTeamMemberHandler } from "./lambda/teamMembers/updateTeamMember";
 import { deleteTeamMemberHandler } from "./lambda/teamMembers/deleteTeamMember";
 import { getUsageMetricsHandler } from "./lambda/usageMetrics/getUsageMetrics";
 import { getDynamoMessagesUsageHandler } from "./lambda/usageMetrics/getDynamoMessagesUsage";
+import { getBroadcastUsageHandler } from "./lambda/usageMetrics/getBroadcastUsage";
 import { getCredentialsHandler } from "./lambda/credentials/getCredentials";
 import { getCustomerOfferingsHandler } from "./lambda/customerOfferings/getCustomerOfferings";
 import { createCustomerOfferingHandler } from "./lambda/customerOfferings/createCustomerOffering";
@@ -1592,6 +1593,40 @@ app.post("/api/gateway-login", async (req, res) => {
       });
     }
   });
+
+  // Broadcast Usage endpoint - Real Broadcast campaign usage from PostgreSQL operational database (public.broadcasts)
+  app.get(
+    [
+      "/api/usage-metrics/broadcasts",
+      "/api/broadcast-usage",
+      "/api/broadcasts-usage",
+      "/api/broadcasts",
+    ],
+    async (req, res) => {
+      try {
+        const result = await getBroadcastUsageHandler({
+          httpMethod: "GET",
+          path: req.path || "/broadcast-usage",
+          headers: req.headers as Record<string, string | undefined>,
+          queryStringParameters: req.query as Record<string, string | undefined>,
+        });
+        let responseData: any;
+        try {
+          responseData = JSON.parse(result.body);
+        } catch {
+          responseData = { message: result.body };
+        }
+        return res.status(result.statusCode).json(responseData);
+      } catch (error: any) {
+        console.error("Error fetching broadcast usage:", error);
+        return res.status(500).json({
+          success: false,
+          source: "postgresql_broadcasts",
+          error: error?.message || "Failed to fetch broadcast usage",
+        });
+      }
+    }
+  );
 
   // Legacy Usage Metrics endpoint (PostgreSQL / Supabase platform summaries)
   app.get("/api/legacy-usage-metrics", async (req, res) => {

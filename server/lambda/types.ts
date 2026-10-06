@@ -1009,3 +1009,110 @@ export interface GetDynamoMessagesUsageResponse {
   warning?: string;
   error?: string;
 }
+
+/**
+ * Exact schema for public.broadcasts in SuperBlock operational PostgreSQL database.
+ * Confirmed columns: id, user_id, campaign_name, template_name, message, message_txt,
+ * language, media_url, uploaded_file_url, media_handle, media_type, has_flow,
+ * business_phone_number_id, graph_api_token, status, total_recipients,
+ * scheduled_at, sent_at, user_name, created_at, completed_at, updated_at, payload.
+ *
+ * NOTE: graph_api_token is strictly excluded from read queries for security.
+ */
+export interface BroadcastRecord {
+  id: string;
+  user_id: string;
+  user_name?: string | null;
+  campaign_name?: string | null;
+  template_name?: string | null;
+  message?: string | null;
+  message_txt?: string | null;
+  language?: string | null;
+  media_url?: string | null;
+  uploaded_file_url?: string | null;
+  media_handle?: string | null;
+  media_type?: string | null;
+  has_flow?: boolean | null;
+  business_phone_number_id?: string | null;
+  status: string | null;
+  total_recipients: number | null;
+  scheduled_at: string | null;
+  sent_at: string | null;
+  created_at: string;
+  completed_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface BroadcastStatusCount {
+  status: string;
+  count: number;
+  recipients: number;
+}
+
+export interface BroadcastMediaTypeCount {
+  mediaType: string;
+  count: number;
+  recipients: number;
+}
+
+export interface BroadcastDailyCount {
+  date: string;
+  broadcasts: number;
+  recipients: number;
+}
+
+export interface BroadcastUsageMetrics {
+  totalBroadcasts: number;
+  totalRecipients: number;
+  avgRecipients: number | null;
+  maxRecipients: number | null;
+  minRecipients: number | null;
+  hasFlowCount: number;
+  statusBreakdown: Record<string, number>;
+  statusDetails: BroadcastStatusCount[];
+  mediaTypeBreakdown: Record<string, number>;
+  mediaTypeDetails: BroadcastMediaTypeCount[];
+  dailyBreakdown: BroadcastDailyCount[];
+  earliestBroadcastAt: string | null;
+  latestBroadcastAt: string | null;
+  recentBroadcasts: BroadcastRecord[];
+}
+
+export interface GetBroadcastUsageResponse {
+  success: boolean;
+  source: "postgresql_broadcasts";
+  table: "public.broadcasts";
+  scope: "customer" | "platform";
+  customerId: string;
+  matchedIdentifier?: string;
+  queriedAt: string;
+  count: number;
+  totalBroadcasts: number;
+  totalRecipients: number;
+  metrics: BroadcastUsageMetrics;
+  // Compatibility with existing Analytics Studio frontend usage API:
+  usageMetrics: Array<{
+    id: string;
+    customer_id: string;
+    metric_name: string;
+    metric_value: number;
+    metric_unit: string;
+    recorded_at: string | null;
+    created_at: string | null;
+  }>;
+  metricBreakdown: Record<
+    string,
+    {
+      metricName: string;
+      count: number;
+      totalValue: number;
+      avgValue: number | null;
+      maxValue: number | null;
+      unit: string;
+      earliestRecordedAt: string | null;
+      latestRecordedAt: string | null;
+    }
+  >;
+  warning?: string;
+  error?: string;
+}

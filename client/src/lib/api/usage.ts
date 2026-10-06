@@ -194,3 +194,159 @@ export function useUsageMetrics(customerId?: string) {
     refresh: loadData,
   };
 }
+
+export interface BroadcastRecordItem {
+  id: string;
+  user_id: string;
+  user_name?: string | null;
+  campaign_name?: string | null;
+  template_name?: string | null;
+  message?: string | null;
+  message_txt?: string | null;
+  language?: string | null;
+  media_type?: string | null;
+  media_url?: string | null;
+  uploaded_file_url?: string | null;
+  has_flow?: boolean | null;
+  status: string | null;
+  total_recipients: number | null;
+  scheduled_at: string | null;
+  sent_at: string | null;
+  created_at: string;
+  completed_at?: string | null;
+}
+
+export interface BroadcastUsageResponse {
+  success: boolean;
+  source: "postgresql_broadcasts";
+  table: "public.broadcasts";
+  scope?: "platform" | "customer";
+  customerId?: string;
+  queriedAt?: string;
+  count: number;
+  totalBroadcasts: number;
+  totalRecipients: number;
+  metrics?: {
+    totalBroadcasts: number;
+    totalRecipients: number;
+    avgRecipients: number | null;
+    maxRecipients: number | null;
+    minRecipients: number | null;
+    hasFlowCount: number;
+    statusBreakdown: Record<string, number>;
+    mediaTypeBreakdown: Record<string, number>;
+    dailyBreakdown: Array<{
+      date: string;
+      broadcasts: number;
+      recipients: number;
+    }>;
+    earliestBroadcastAt: string | null;
+    latestBroadcastAt: string | null;
+    recentBroadcasts: BroadcastRecordItem[];
+  };
+  usageMetrics?: UsageMetricItem[];
+  metricBreakdown?: Record<string, MetricBreakdownItem>;
+  warning?: string;
+  error?: string;
+}
+
+/**
+ * Fetches real broadcast usage data from the PostgreSQL operational database ('superblockhq').
+ * Supports platform-wide queries or customer-scoped queries via customerId / broadcasts.user_id.
+ */
+export async function fetchBroadcastUsage(
+  customerId?: string
+): Promise<BroadcastUsageResponse> {
+  const headers = await authHeaders();
+  const queryParam = customerId ? `?customerId=${encodeURIComponent(customerId)}` : "";
+
+  // 1. Try local/proxied API route first (/api/broadcast-usage)
+  try {
+    const response = await fetch(`/api/broadcast-usage${queryParam}`, {
+      method: "GET",
+      headers,
+    });
+
+    if (response.ok) {
+      const data = (await response.json()) as BroadcastUsageResponse;
+      if (data && typeof data === "object") {
+        return data;
+      }
+    }
+  } catch (err) {
+    console.warn("Local broadcast-usage proxy fetch notice:", err);
+  }
+
+  // 2. Direct production gateway fallback if outside local development
+  if (!isLocalhost()) {
+    try {
+      const gatewayAction = customerId
+        ? `?action=broadcast-usage&customerId=${encodeURIComponent(customerId)}`
+        : "?action=broadcast-usage";
+
+      const res = await fetch(`${PRODUCTION_GATEWAY_BASE}${gatewayAction}`, {
+        method: "GET",
+        headers,
+      });
+
+      if (res.ok) {
+        const data = (await res.json()) as BroadcastUsageResponse;
+        if (data && typeof data === "object") {
+          return data;
+        }
+      }
+    } catch (err) {
+      console.warn("Direct gateway broadcast-usage fetch notice:", err);
+    }
+  }
+
+  // 3. Clean fallback with honest reporting
+  return {
+    success: false,
+    source: "postgresql_broadcasts",
+    table: "public.broadcasts",
+    scope: customerId ? "customer" : "platform",
+    customerId,
+    count: 0,
+    totalBroadcasts: 0,
+    totalRecipients: 0,
+    error: "Broadcast usage service currently unpopulated or unreachable",
+  };
+}
+
+/**
+ * React hook to fetch and subscribe to real broadcast usage metrics.
+ */
+export function useBroadcastUsage(customerId?: string) {
+  const [data, setData] = useState<BroadcastUsageResponse | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetchBroadcastUsage(customerId);
+      setData(res);
+      if (!res.success && res.error) {
+        setError(res.error);
+      } else {
+        setError(null);
+      }
+    } catch (err: any) {
+      setError(err?.message || "Failed to load broadcast usage data");
+    } finally {
+      setLoading(false);
+    }
+  }, [customerId]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  return {
+    data,
+    loading,
+    error,
+    refresh: loadData,
+  };
+}

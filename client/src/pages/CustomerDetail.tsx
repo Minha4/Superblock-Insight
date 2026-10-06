@@ -129,7 +129,7 @@ import {
 } from "@/types/customer";
 import { useCustomerAnalytics, defaultAllCustomers } from "@/lib/api/customerAnalytics";
 import { useCustomerProfile } from "@/lib/api/customerProfile";
-import { useUsageMetrics, type PlatformUsageResponse } from "@/lib/api/usage";
+import { useUsageMetrics, useBroadcastUsage, type PlatformUsageResponse } from "@/lib/api/usage";
 import { fetchAuthSession } from "aws-amplify/auth";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -200,6 +200,7 @@ export default function CustomerDetail() {
 
   const { profile } = useCustomerProfile(rawCustomer?.id);
   const { data: usageData } = useUsageMetrics(rawCustomer?.id);
+  const { data: broadcastData } = useBroadcastUsage(rawCustomer?.id);
 
   interface CustomerOperationsPayload {
     activities: CustomerActivity[];
@@ -367,7 +368,7 @@ export default function CustomerDetail() {
     let usage = {
       messages: resolvedMessages,
       whatsapp: usageData?.metricBreakdown?.whatsapp?.totalValue ?? resolvedMessages,
-      broadcasts: usageData?.metricBreakdown?.broadcasts?.totalValue ?? 0,
+      broadcasts: broadcastData?.totalBroadcasts ?? usageData?.metricBreakdown?.broadcasts?.totalValue ?? 0,
       conversations: usageData?.metricBreakdown?.conversations?.totalValue ?? 0,
       email: usageData?.metricBreakdown?.email?.totalValue ?? 0,
       sms: usageData?.metricBreakdown?.sms?.totalValue ?? 0,
