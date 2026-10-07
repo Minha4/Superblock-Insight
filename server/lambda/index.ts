@@ -39,8 +39,6 @@ import { getPlansHandler } from "./plans/getPlans";
 import { createPlanHandler } from "./plans/createPlan";
 import { updatePlanHandler } from "./plans/updatePlan";
 import { deletePlanHandler } from "./plans/deletePlan";
-import { getUsageMetricsHandler } from "./usageMetrics/getUsageMetrics";
-import { createUsageMetricHandler } from "./usageMetrics/createUsageMetric";
 import { getDynamoMessagesUsageHandler } from "./usageMetrics/getDynamoMessagesUsage";
 import { getBroadcastUsageHandler } from "./usageMetrics/getBroadcastUsage";
 import { getActivitiesHandler } from "./activities/getActivities";
@@ -93,8 +91,6 @@ export { getPlansHandler } from "./plans/getPlans";
 export { createPlanHandler } from "./plans/createPlan";
 export { updatePlanHandler } from "./plans/updatePlan";
 export { deletePlanHandler } from "./plans/deletePlan";
-export { getUsageMetricsHandler } from "./usageMetrics/getUsageMetrics";
-export { createUsageMetricHandler } from "./usageMetrics/createUsageMetric";
 export { getDynamoMessagesUsageHandler } from "./usageMetrics/getDynamoMessagesUsage";
 export { getBroadcastUsageHandler } from "./usageMetrics/getBroadcastUsage";
 export { getActivitiesHandler } from "./activities/getActivities";
@@ -506,33 +502,6 @@ export async function handler(
           action === "dynamodb_messages"))
     ) {
       return await getDynamoMessagesUsageHandler(event);
-    }
-
-    // 12b. Legacy Usage Metrics API (PostgreSQL public.usage_metrics)
-    if (
-      (method === "GET" &&
-        (rawPath.endsWith("/legacy-usage-metrics") ||
-          rawPath.includes("/legacy-usage-metrics/"))) ||
-      (method === "GET" &&
-        (action === "legacy_usage" ||
-          action === "legacy-usage" ||
-          action === "legacy_usage_metrics" ||
-          action === "legacy-usage-metrics"))
-    ) {
-      return await getUsageMetricsHandler(event);
-    }
-    if (
-      (method === "POST" &&
-        (rawPath.endsWith("/usage-metrics") ||
-          rawPath.endsWith("/usage_metrics") ||
-          rawPath.endsWith("/legacy-usage-metrics"))) ||
-      (method === "POST" &&
-        (action === "usage_metrics" ||
-          action === "usage-metrics" ||
-          action === "usagemetrics" ||
-          action === "legacy_usage"))
-    ) {
-      return await createUsageMetricHandler(event);
     }
 
     // 13. Activities API

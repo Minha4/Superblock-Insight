@@ -31,9 +31,6 @@ interface CreateMeetingResponse {
 const PRODUCTION_CUSTOMER_BASE =
   "https://gateway.superblock.chat/customeranalytics";
 
-const PRODUCTION_DASHBOARD_BASE =
-  "https://gateway.superblock.chat/customeranalyticsdashaboard";
-
 async function authHeaders(): Promise<Record<string, string>> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",

@@ -31,10 +31,6 @@ interface MutateNoteResponse {
 const PRODUCTION_CUSTOMER_BASE =
   "https://gateway.superblock.chat/customeranalytics";
 
-// Dashboard base
-const PRODUCTION_DASHBOARD_BASE =
-  "https://gateway.superblock.chat/customeranalyticsdashaboard";
-
 function isLocalhost(): boolean {
   if (typeof window === "undefined") return false;
   const host = window.location.hostname;

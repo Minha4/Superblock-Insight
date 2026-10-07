@@ -42,7 +42,6 @@ import { getTeamMembersHandler } from "./lambda/teamMembers/getTeamMembers";
 import { createTeamMemberHandler } from "./lambda/teamMembers/createTeamMember";
 import { updateTeamMemberHandler } from "./lambda/teamMembers/updateTeamMember";
 import { deleteTeamMemberHandler } from "./lambda/teamMembers/deleteTeamMember";
-import { getUsageMetricsHandler } from "./lambda/usageMetrics/getUsageMetrics";
 import { getDynamoMessagesUsageHandler } from "./lambda/usageMetrics/getDynamoMessagesUsage";
 import { getBroadcastUsageHandler } from "./lambda/usageMetrics/getBroadcastUsage";
 import { getCredentialsHandler } from "./lambda/credentials/getCredentials";
@@ -1627,32 +1626,6 @@ app.post("/api/gateway-login", async (req, res) => {
       }
     }
   );
-
-  // Legacy Usage Metrics endpoint (PostgreSQL / Supabase platform summaries)
-  app.get("/api/legacy-usage-metrics", async (req, res) => {
-    try {
-      const result = await getUsageMetricsHandler({
-        httpMethod: "GET",
-        path: "/legacy-usage-metrics",
-        headers: req.headers as Record<string, string | undefined>,
-        queryStringParameters: req.query as Record<string, string | undefined>,
-      });
-      let responseData: any;
-      try {
-        responseData = JSON.parse(result.body);
-      } catch {
-        responseData = { message: result.body };
-      }
-      return res.status(result.statusCode).json(responseData);
-    } catch (error: any) {
-      console.error("Error fetching legacy usage metrics:", error);
-      return res.status(500).json({
-        success: false,
-        error: error?.message || "Failed to fetch legacy usage metrics",
-        usageMetrics: [],
-      });
-    }
-  });
 
   // Customer Offerings endpoints connected to Supabase public.customer_offerings
   app.get("/api/customer-offerings", async (req, res) => {

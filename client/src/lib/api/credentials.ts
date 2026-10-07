@@ -64,9 +64,6 @@ interface CredentialsResponse {
   error?: string;
 }
 
-const PRODUCTION_DASHBOARD_BASE =
-  "https://gateway.superblock.chat/customeranalyticsdashaboard";
-
 async function authHeaders(): Promise<Record<string, string>> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
