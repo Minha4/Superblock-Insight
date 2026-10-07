@@ -72,33 +72,41 @@ async function authHeaders(): Promise<Record<string, string>> {
   return headers;
 }
 
-function isLocalhost(): boolean {
-  if (typeof window === "undefined") return false;
-  const host = window.location.hostname;
-  return (
-    Boolean(import.meta.env.DEV) ||
-    host === "localhost" ||
-    host === "127.0.0.1" ||
-    host === "0.0.0.0" ||
-    host.endsWith(".local") ||
-    host.startsWith("192.168.") ||
-    host.startsWith("10.") ||
-    host.startsWith("172.")
-  );
-}
-
 /**
  * Fetches real usage metrics from the SuperBlock backend endpoint.
+ * Primary: https://gateway.superblock.chat/customeranalyticsdashaboard?action=usage-metrics
+ * Fallback: Local /api/usage-metrics route for offline/local development.
  * Supports platform-wide queries (no customerId) or customer-scoped queries.
  */
 export async function fetchUsageMetrics(
   customerId?: string
 ): Promise<PlatformUsageResponse> {
   const headers = await authHeaders();
-  const queryParam = customerId ? `?customerId=${encodeURIComponent(customerId)}` : "";
 
-  // 1. Try local/proxied API route first (/api/usage-metrics)
+  // 1. Direct production gateway as primary source
   try {
+    const gatewayAction = customerId
+      ? `?action=usage-metrics&customerId=${encodeURIComponent(customerId)}`
+      : "?action=usage-metrics";
+
+    const res = await fetch(`${PRODUCTION_GATEWAY_BASE}${gatewayAction}`, {
+      method: "GET",
+      headers,
+    });
+
+    if (res.ok) {
+      const data = (await res.json()) as PlatformUsageResponse;
+      if (data && typeof data === "object") {
+        return data;
+      }
+    }
+  } catch (err) {
+    console.warn("Primary gateway usage-metrics fetch notice:", err);
+  }
+
+  // 2. Safe local-development fallback if the gateway cannot be reached
+  try {
+    const queryParam = customerId ? `?customerId=${encodeURIComponent(customerId)}` : "";
     const response = await fetch(`/api/usage-metrics${queryParam}`, {
       method: "GET",
       headers,
@@ -111,30 +119,7 @@ export async function fetchUsageMetrics(
       }
     }
   } catch (err) {
-    console.warn("Local usage-metrics proxy fetch notice:", err);
-  }
-
-  // 2. Direct production gateway fallback if outside local development
-  if (!isLocalhost()) {
-    try {
-      const gatewayAction = customerId
-        ? `?action=usage-metrics&customerId=${encodeURIComponent(customerId)}`
-        : "?action=usage-metrics";
-
-      const res = await fetch(`${PRODUCTION_GATEWAY_BASE}${gatewayAction}`, {
-        method: "GET",
-        headers,
-      });
-
-      if (res.ok) {
-        const data = (await res.json()) as PlatformUsageResponse;
-        if (data && typeof data === "object") {
-          return data;
-        }
-      }
-    } catch (err) {
-      console.warn("Direct gateway usage-metrics fetch notice:", err);
-    }
+    console.warn("Local usage-metrics fallback fetch notice:", err);
   }
 
   // 3. Clean empty fallback with honest reporting
@@ -251,17 +236,40 @@ export interface BroadcastUsageResponse {
 }
 
 /**
- * Fetches real broadcast usage data from the PostgreSQL operational database ('superblockhq').
+ * Fetches real broadcast usage data from the SuperBlock backend endpoint.
+ * Primary: https://gateway.superblock.chat/customeranalyticsdashaboard?action=broadcast-usage
+ * Fallback: Local /api/broadcast-usage route for offline/local development.
  * Supports platform-wide queries or customer-scoped queries via customerId / broadcasts.user_id.
  */
 export async function fetchBroadcastUsage(
   customerId?: string
 ): Promise<BroadcastUsageResponse> {
   const headers = await authHeaders();
-  const queryParam = customerId ? `?customerId=${encodeURIComponent(customerId)}` : "";
 
-  // 1. Try local/proxied API route first (/api/broadcast-usage)
+  // 1. Direct production gateway as primary source
   try {
+    const gatewayAction = customerId
+      ? `?action=broadcast-usage&customerId=${encodeURIComponent(customerId)}`
+      : "?action=broadcast-usage";
+
+    const res = await fetch(`${PRODUCTION_GATEWAY_BASE}${gatewayAction}`, {
+      method: "GET",
+      headers,
+    });
+
+    if (res.ok) {
+      const data = (await res.json()) as BroadcastUsageResponse;
+      if (data && typeof data === "object") {
+        return data;
+      }
+    }
+  } catch (err) {
+    console.warn("Primary gateway broadcast-usage fetch notice:", err);
+  }
+
+  // 2. Safe local-development fallback if the gateway cannot be reached
+  try {
+    const queryParam = customerId ? `?customerId=${encodeURIComponent(customerId)}` : "";
     const response = await fetch(`/api/broadcast-usage${queryParam}`, {
       method: "GET",
       headers,
@@ -274,30 +282,7 @@ export async function fetchBroadcastUsage(
       }
     }
   } catch (err) {
-    console.warn("Local broadcast-usage proxy fetch notice:", err);
-  }
-
-  // 2. Direct production gateway fallback if outside local development
-  if (!isLocalhost()) {
-    try {
-      const gatewayAction = customerId
-        ? `?action=broadcast-usage&customerId=${encodeURIComponent(customerId)}`
-        : "?action=broadcast-usage";
-
-      const res = await fetch(`${PRODUCTION_GATEWAY_BASE}${gatewayAction}`, {
-        method: "GET",
-        headers,
-      });
-
-      if (res.ok) {
-        const data = (await res.json()) as BroadcastUsageResponse;
-        if (data && typeof data === "object") {
-          return data;
-        }
-      }
-    } catch (err) {
-      console.warn("Direct gateway broadcast-usage fetch notice:", err);
-    }
+    console.warn("Local broadcast-usage fallback fetch notice:", err);
   }
 
   // 3. Clean fallback with honest reporting

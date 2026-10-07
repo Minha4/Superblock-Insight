@@ -523,7 +523,13 @@ export async function handler(
     if (
       (method === "GET" &&
         (rawPath.endsWith("/credentials") || rawPath.includes("/credentials/"))) ||
-      (method === "GET" && (action === "credentials" || action === "get_credentials"))
+      (method === "GET" && (
+        action === "credentials" ||
+        action === "credential" ||
+        action === "customer_credentials" ||
+        action === "customer-credentials" ||
+        action === "get_credentials"
+      ))
     ) {
       return await getCredentialsHandler(event);
     }

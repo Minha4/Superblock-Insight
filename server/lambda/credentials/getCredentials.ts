@@ -108,12 +108,24 @@ export async function getCredentialsHandler(
     const customerId = (
       params.customerId ||
       params.customer_id ||
+      params.clientUserId ||
+      params.client_user_id ||
+      params.userId ||
+      params.user_id ||
       pathParams.customerId ||
       pathParams.id ||
       ""
     ).trim();
 
-    if (!customerId) {
+    const customerName = (
+      params.customerName ||
+      params.customer_name ||
+      params.company ||
+      params.name ||
+      ""
+    ).trim();
+
+    if (!customerId && !customerName) {
       const responseBody: GetCredentialsResponse = {
         success: false,
         customerId: "",
@@ -127,57 +139,63 @@ export async function getCredentialsHandler(
       };
     }
 
-    const sql = `
-      SELECT 
-        u.user_id::text,
-        u.user_name,
-        u.user_email,
-        u.email,
-        u.role,
-        u.plan,
-        u.app_id,
-        u.business_account_id,
-        u.business_phone_number_id,
-        u.business_portfolio_id,
-        u.whatsapp_endpoint,
-        u.graph_api_token,
-        u.facebook_page_id,
-        u.facebook_page_name,
-        u.facebook_endpoint,
-        u.facebook_access_token,
-        u.instagram_username,
-        u.instagram_endpoint,
-        u.instagram_access_token,
-        u.shopify_api_url,
-        u.shopify_admin_access_token,
-        u.updated_at,
-        cd.id::text as customer_details_id,
-        cd.customer_name
-      FROM public.users u
-      LEFT JOIN public.customers_details cd ON (
-        LOWER(cd.client_user_id) = LOWER(u.user_name)
-        OR LOWER(cd.client_user_id) = LOWER(u.email)
-        OR LOWER(cd.client_user_id) = LOWER(u.user_email)
-        OR LOWER(cd.email) = LOWER(u.user_email)
-        OR LOWER(cd.email) = LOWER(u.email)
-      )
-      WHERE u.user_id::text = $1
-         OR LOWER(u.user_name) = LOWER($1)
-         OR LOWER(u.user_email) = LOWER($1)
-         OR LOWER(u.email) = LOWER($1)
-         OR cd.id::text = $1
-         OR LOWER(cd.client_user_id) = LOWER($1)
-      LIMIT 1;
-    `;
+    const effectiveCustomerId = customerId || customerName;
+    const cleanName = customerName ? customerName.toLowerCase().replace(/[^a-z0-9]/g, "") : "";
+    const cleanId = effectiveCustomerId ? effectiveCustomerId.toLowerCase().replace(/[^a-z0-9]/g, "") : "";
 
     let row: any = null;
+
+    // 1. Direct query on SuperBlock public.users with all credentials columns
     try {
-      const result = await executeCredentialsQuery<any>(sql, [customerId]);
+      const fullUsersSql = `
+        SELECT
+          u.user_id::text,
+          u.user_name,
+          u.user_email,
+          u.email,
+          u.role,
+          u.plan,
+          u.app_id,
+          u.business_account_id,
+          u.business_phone_number_id,
+          u.business_portfolio_id,
+          u.whatsapp_endpoint,
+          u.graph_api_token,
+          u.facebook_page_id,
+          u.facebook_page_name,
+          u.facebook_endpoint,
+          u.facebook_access_token,
+          u.instagram_username,
+          u.instagram_endpoint,
+          u.instagram_access_token,
+          u.shopify_api_url,
+          u.shopify_admin_access_token,
+          u.updated_at
+        FROM public.users u
+        WHERE u.user_id::text = $1
+           OR LOWER(u.user_name) = LOWER($1)
+           OR LOWER(COALESCE(u.user_email, '')) = LOWER($1)
+           OR LOWER(COALESCE(u.email, '')) = LOWER($1)
+           OR ($2 <> '' AND (
+                LOWER(u.user_name) = LOWER($2)
+             OR LOWER(COALESCE(u.user_email, '')) = LOWER($2)
+             OR LOWER(COALESCE(u.email, '')) = LOWER($2)
+             OR LOWER(REPLACE(u.user_name, ' ', '')) = $3
+             OR LOWER(REPLACE(u.user_name, ' ', '')) = $4
+           ))
+        LIMIT 1;
+      `;
+      const result = await executeCredentialsQuery<any>(fullUsersSql, [
+        effectiveCustomerId,
+        customerName,
+        cleanName,
+        cleanId,
+      ]);
       if (result.rows.length > 0) {
         row = result.rows[0];
       }
     } catch {
-      // If multi-column join fails (e.g. some optional channel columns absent), attempt core users query
+      // 2. Fallback to core public.users columns if optional channel columns are absent
       try {
         const coreSql = `
           SELECT
@@ -187,6 +205,7 @@ export async function getCredentialsHandler(
             u.email,
             u.role,
             u.plan,
+            u.app_id,
             u.business_account_id,
             u.business_phone_number_id,
             u.business_portfolio_id,
@@ -196,16 +215,73 @@ export async function getCredentialsHandler(
           FROM public.users u
           WHERE u.user_id::text = $1
              OR LOWER(u.user_name) = LOWER($1)
-             OR LOWER(u.user_email) = LOWER($1)
-             OR LOWER(u.email) = LOWER($1)
+             OR LOWER(COALESCE(u.user_email, '')) = LOWER($1)
+             OR LOWER(COALESCE(u.email, '')) = LOWER($1)
+             OR ($2 <> '' AND (
+                  LOWER(u.user_name) = LOWER($2)
+               OR LOWER(COALESCE(u.user_email, '')) = LOWER($2)
+               OR LOWER(COALESCE(u.email, '')) = LOWER($2)
+               OR LOWER(REPLACE(u.user_name, ' ', '')) = $3
+               OR LOWER(REPLACE(u.user_name, ' ', '')) = $4
+             ))
           LIMIT 1;
         `;
-        const coreResult = await executeCredentialsQuery<any>(coreSql, [customerId]);
+        const coreResult = await executeCredentialsQuery<any>(coreSql, [
+          effectiveCustomerId,
+          customerName,
+          cleanName,
+          cleanId,
+        ]);
         if (coreResult.rows.length > 0) {
           row = coreResult.rows[0];
         }
       } catch (dbErr) {
         console.warn("Could not query operational database for customer credentials:", dbErr);
+      }
+    }
+
+    // 3. If still no row found and customers_details table is accessible, attempt cross-table match
+    if (!row) {
+      try {
+        const joinedSql = `
+          SELECT
+            u.user_id::text,
+            u.user_name,
+            u.user_email,
+            u.email,
+            u.role,
+            u.plan,
+            u.app_id,
+            u.business_account_id,
+            u.business_phone_number_id,
+            u.business_portfolio_id,
+            u.whatsapp_endpoint,
+            u.graph_api_token,
+            u.updated_at,
+            cd.id::text as customer_details_id,
+            cd.customer_name
+          FROM public.users u
+          INNER JOIN public.customers_details cd ON (
+            LOWER(cd.client_user_id) = LOWER(u.user_name)
+            OR LOWER(cd.client_user_id) = LOWER(u.email)
+            OR LOWER(cd.client_user_id) = LOWER(u.user_email)
+            OR LOWER(cd.email) = LOWER(u.user_email)
+            OR LOWER(cd.email) = LOWER(u.email)
+          )
+          WHERE cd.id::text = $1
+             OR LOWER(cd.client_user_id) = LOWER($1)
+             OR ($2 <> '' AND LOWER(cd.customer_name) = LOWER($2))
+          LIMIT 1;
+        `;
+        const joinResult = await executeCredentialsQuery<any>(joinedSql, [
+          effectiveCustomerId,
+          customerName,
+        ]);
+        if (joinResult.rows.length > 0) {
+          row = joinResult.rows[0];
+        }
+      } catch {
+        // customers_details table might not exist in this database
       }
     }
 
@@ -255,7 +331,7 @@ export async function getCredentialsHandler(
 
     const username = row.user_name || customerId;
     const userEmail = row.user_email || row.email || "";
-    const customerName = row.customer_name || username;
+    const resolvedCustomerName = customerName || row.customer_name || username;
 
     const hasMetaToken = !!(row.graph_api_token && row.graph_api_token.trim().length > 0);
     const hasMetaPhone = !!(row.business_phone_number_id && row.business_phone_number_id.trim().length > 0);
@@ -274,7 +350,7 @@ export async function getCredentialsHandler(
 
     const credentials: CustomerCredentialsPayload = {
       customerId: row.customer_details_id || row.user_id,
-      customerName,
+      customerName: resolvedCustomerName,
       username,
       email: userEmail,
       role: row.role || "Admin",

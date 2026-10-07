@@ -98,6 +98,17 @@ function isLocalhost(): boolean {
   );
 }
 
+const PRODUCTION_CREDENTIALS_GATEWAY =
+  "https://gateway.superblock.chat/customeranalyticsdashaboard";
+
+export function maskToken(token?: string | null): string | null {
+  if (!token || !token.trim()) return null;
+  const t = token.trim();
+  if (t.includes("••••")) return t;
+  if (t.length <= 8) return "••••••••";
+  return `${t.slice(0, 4)}••••••••••••••••${t.slice(-4)}`;
+}
+
 export interface CustomerCredentialsContext {
   id?: string;
   company?: string;
@@ -116,6 +127,18 @@ export interface CustomerCredentialsContext {
     business_phone_number_id?: string | null;
     business_account_id?: string | null;
     business_portfolio_id?: string | null;
+    app_id?: string | null;
+    whatsapp_endpoint?: string | null;
+    graph_api_token?: string | null;
+    facebook_page_id?: string | null;
+    facebook_page_name?: string | null;
+    facebook_endpoint?: string | null;
+    facebook_access_token?: string | null;
+    instagram_username?: string | null;
+    instagram_endpoint?: string | null;
+    instagram_access_token?: string | null;
+    shopify_api_url?: string | null;
+    shopify_admin_access_token?: string | null;
     user_name?: string | null;
     user_email?: string | null;
     email?: string | null;
@@ -143,6 +166,12 @@ export function populateCredentialsWithRealData(
 ): CustomerCredentialsData {
   if (!context) return base;
 
+  // Real App ID (strictly from database/API schema: app_id)
+  const realAppId =
+    base.meta.appId ||
+    context.rawUser?.app_id ||
+    null;
+
   // Real Meta WhatsApp Phone ID (strictly from database/API schema: business_phone_number_id)
   const realPhoneId =
     base.meta.businessPhoneNumberId ||
@@ -160,6 +189,17 @@ export function populateCredentialsWithRealData(
     base.meta.businessPortfolioId ||
     context.rawUser?.business_portfolio_id ||
     null;
+
+  const realWhatsappEndpoint =
+    base.meta.whatsappEndpoint ||
+    context.rawUser?.whatsapp_endpoint ||
+    "https://gateway.superblock.chat/sendWhatsappMessage";
+
+  const realGraphApiToken =
+    base.meta.graphApiToken ||
+    (context.rawUser?.graph_api_token ? maskToken(context.rawUser.graph_api_token) : null);
+
+  const hasToken = base.meta.hasToken || Boolean(realGraphApiToken);
 
   // Real SuperBlock Username
   const hasBetterUsername =
@@ -203,7 +243,6 @@ export function populateCredentialsWithRealData(
 
   const hasPhone = Boolean(realPhoneId && realPhoneId.trim().length > 0);
   const hasWaba = Boolean(realWabaId && realWabaId.trim().length > 0);
-  const hasToken = base.meta.hasToken;
 
   let status: "Configured" | "Partial" | "Unconfigured" = base.status;
   if (hasToken && hasPhone) {
@@ -213,6 +252,40 @@ export function populateCredentialsWithRealData(
   } else if (status !== "Configured") {
     status = "Unconfigured";
   }
+
+  // Channels (Facebook, Instagram, Shopify)
+  const fbPageId = base.channels?.facebook?.pageId || context.rawUser?.facebook_page_id || null;
+  const fbToken = base.channels?.facebook?.accessToken || (context.rawUser?.facebook_access_token ? maskToken(context.rawUser.facebook_access_token) : null);
+  const facebookChannel: FacebookCredentials | null = (fbPageId || fbToken)
+    ? {
+        pageId: fbPageId,
+        pageName: base.channels?.facebook?.pageName || context.rawUser?.facebook_page_name || null,
+        endpoint: base.channels?.facebook?.endpoint || context.rawUser?.facebook_endpoint || null,
+        hasToken: Boolean(fbToken),
+        accessToken: fbToken,
+      }
+    : (base.channels?.facebook || null);
+
+  const igUsername = base.channels?.instagram?.username || context.rawUser?.instagram_username || null;
+  const igToken = base.channels?.instagram?.accessToken || (context.rawUser?.instagram_access_token ? maskToken(context.rawUser.instagram_access_token) : null);
+  const instagramChannel: InstagramCredentials | null = (igUsername || igToken)
+    ? {
+        username: igUsername,
+        endpoint: base.channels?.instagram?.endpoint || context.rawUser?.instagram_endpoint || null,
+        hasToken: Boolean(igToken),
+        accessToken: igToken,
+      }
+    : (base.channels?.instagram || null);
+
+  const shopifyUrl = base.channels?.shopify?.apiUrl || context.rawUser?.shopify_api_url || null;
+  const shopifyToken = base.channels?.shopify?.adminAccessToken || (context.rawUser?.shopify_admin_access_token ? maskToken(context.rawUser.shopify_admin_access_token) : null);
+  const shopifyChannel: ShopifyCredentials | null = (shopifyUrl || shopifyToken)
+    ? {
+        apiUrl: shopifyUrl,
+        hasToken: Boolean(shopifyToken),
+        adminAccessToken: shopifyToken,
+      }
+    : (base.channels?.shopify || null);
 
   return {
     ...base,
@@ -224,11 +297,13 @@ export function populateCredentialsWithRealData(
     status,
     updatedAt: realUpdatedAt,
     meta: {
-      ...base.meta,
+      appId: realAppId,
       businessPhoneNumberId: realPhoneId,
       businessAccountId: realWabaId,
       businessPortfolioId: realPortfolioId,
-      // appId, whatsappEndpoint, hasToken, graphApiToken are preserved
+      whatsappEndpoint: realWhatsappEndpoint,
+      hasToken,
+      graphApiToken: realGraphApiToken,
     },
     superblock: {
       ...base.superblock,
@@ -237,6 +312,11 @@ export function populateCredentialsWithRealData(
       role: realRole,
       plan: realPlan,
       loginUrl: base.superblock.loginUrl || "https://app.superblock.chat",
+    },
+    channels: {
+      facebook: facebookChannel,
+      instagram: instagramChannel,
+      shopify: shopifyChannel,
     },
   };
 }
@@ -288,7 +368,9 @@ export function buildUnconfiguredCredentials(
 
 /**
  * Retrieves real operational customer credentials (Meta WhatsApp, Superblock, Social & E-commerce).
- * Enriches missing fields with real customer data already fetched for the selected customer.
+ * Primary source: https://gateway.superblock.chat/customeranalyticsdashaboard?action=credentials
+ * Local development fallback: /api/credentials
+ * Never fabricates fake tokens or credentials.
  */
 export async function getCustomerCredentials(
   customerId: string,
@@ -301,11 +383,47 @@ export async function getCustomerCredentials(
 
   const headers = await authHeaders();
 
+  // 1. Production Primary: Fetch through Gateway -> Lambda -> SuperBlock PostgreSQL public.users
   try {
-    const response = await fetch(
-      `/api/credentials?customerId=${encodeURIComponent(customerId)}`,
-      { method: "GET", headers }
-    );
+    const params = new URLSearchParams();
+    params.set("action", "credentials");
+    params.set("customerId", customerId);
+    if (customerName) {
+      params.set("customerName", customerName);
+    }
+
+    const gatewayUrl = `${PRODUCTION_CREDENTIALS_GATEWAY}?${params.toString()}`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 6000);
+
+    const gatewayRes = await fetch(gatewayUrl, {
+      method: "GET",
+      headers,
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    if (gatewayRes.ok) {
+      const data = (await gatewayRes.json().catch(() => null)) as CredentialsResponse | null;
+      if (data?.success && data.credentials) {
+        return populateCredentialsWithRealData(data.credentials, context);
+      }
+    } else {
+      console.warn(`Gateway credentials returned HTTP ${gatewayRes.status}, attempting local fallback`);
+    }
+  } catch (gwErr) {
+    console.warn("Gateway credentials call failed, falling back to local API:", gwErr);
+  }
+
+  // 2. Safe local development fallback: /api/credentials
+  try {
+    const queryParams = new URLSearchParams();
+    queryParams.set("customerId", customerId);
+    if (customerName) {
+      queryParams.set("customerName", customerName);
+    }
+    const localUrl = `/api/credentials?${queryParams.toString()}`;
+    const response = await fetch(localUrl, { method: "GET", headers });
     if (response.ok) {
       const data = (await response.json().catch(() => null)) as CredentialsResponse | null;
       if (data?.success && data.credentials) {
@@ -313,7 +431,9 @@ export async function getCustomerCredentials(
       }
     }
   } catch (err) {
-    console.warn("Credentials fetch failed, returning unconfigured state with customer context:", err);
+    console.warn("Local credentials fetch failed, returning unconfigured state with customer context:", err);
   }
+
+  // 3. Graceful fallback with available real context without fabricated tokens or accounts
   return buildUnconfiguredCredentials(customerId, customerName, context);
 }
