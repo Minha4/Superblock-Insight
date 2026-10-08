@@ -131,8 +131,10 @@ export default function AnalyticsStudio() {
 
   const loadSubscriptions = useCallback(async () => {
     setSubsLoading(true);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
     try {
-      const res = await fetch("/api/subscriptions");
+      const res = await fetch("/api/subscriptions", { signal: controller.signal });
       if (res.ok) {
         const json = await res.json();
         if (json?.success && Array.isArray(json?.subscriptions)) {
@@ -146,14 +148,17 @@ export default function AnalyticsStudio() {
     } catch {
       setSubscriptions([]);
     } finally {
+      clearTimeout(timeoutId);
       setSubsLoading(false);
     }
   }, []);
 
   const loadActivities = useCallback(async () => {
     setActivitiesLoading(true);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
     try {
-      const res = await fetch("/api/customer-activities");
+      const res = await fetch("/api/customer-activities", { signal: controller.signal });
       if (res.ok) {
         const json = await res.json();
         if (json?.success && Array.isArray(json?.activities)) {
@@ -167,14 +172,17 @@ export default function AnalyticsStudio() {
     } catch {
       setActivities([]);
     } finally {
+      clearTimeout(timeoutId);
       setActivitiesLoading(false);
     }
   }, []);
 
   const loadTickets = useCallback(async () => {
     setTicketsLoading(true);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
     try {
-      const res = await fetch("/api/customer-tickets");
+      const res = await fetch("/api/customer-tickets", { signal: controller.signal });
       if (res.ok) {
         const json = await res.json();
         if (json?.success && Array.isArray(json?.tickets)) {
@@ -188,6 +196,7 @@ export default function AnalyticsStudio() {
     } catch {
       setTickets([]);
     } finally {
+      clearTimeout(timeoutId);
       setTicketsLoading(false);
     }
   }, []);
@@ -645,13 +654,8 @@ export default function AnalyticsStudio() {
     });
   }, [activities, dateRange]);
 
-  const isLoading =
-    isRefreshing ||
-    analyticsLoading ||
-    usageLoading ||
-    subsLoading ||
-    activitiesLoading ||
-    ticketsLoading;
+  // Core dashboard loading state: false once customers are present, or once initial sync resolves.
+  const isLoading = isRefreshing || (analyticsLoading && customers.length === 0);
 
   const handleRefresh = async () => {
     try {

@@ -601,10 +601,24 @@ export async function fetchAnalyticsData(force = false): Promise<AnalyticsDbPayl
       const pythonExe = getPythonPath();
       const scriptPath = getScriptPath();
 
+      if (pythonExe !== "python" && !fs.existsSync(pythonExe)) {
+        return resolve({
+          success: false,
+          activities: [],
+          products: [],
+          deals: [],
+          tasks: [],
+          tickets: [],
+          groups: [],
+          notes: [],
+          error: "Python runtime not configured",
+        });
+      }
+
       execFile(
         pythonExe,
         [scriptPath],
-        { maxBuffer: 15 * 1024 * 1024 },
+        { timeout: 2500, maxBuffer: 15 * 1024 * 1024 },
         (error, stdout, stderr) => {
           if (error) {
             console.error("❌ [AnalyticsDb] Query execution failed:", error.message);

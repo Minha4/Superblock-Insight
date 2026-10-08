@@ -83,16 +83,20 @@ export async function fetchUsageMetrics(
 ): Promise<PlatformUsageResponse> {
   const headers = await authHeaders();
 
-  // 1. Direct production gateway as primary source
+  // 1. Direct production gateway as primary source (with timeout)
   try {
     const gatewayAction = customerId
       ? `?action=usage-metrics&customerId=${encodeURIComponent(customerId)}`
       : "?action=usage-metrics";
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
+
     const res = await fetch(`${PRODUCTION_GATEWAY_BASE}${gatewayAction}`, {
       method: "GET",
       headers,
-    });
+      signal: controller.signal,
+    }).finally(() => clearTimeout(timeoutId));
 
     if (res.ok) {
       const data = (await res.json()) as PlatformUsageResponse;
@@ -104,13 +108,17 @@ export async function fetchUsageMetrics(
     console.warn("Primary gateway usage-metrics fetch notice:", err);
   }
 
-  // 2. Safe local-development fallback if the gateway cannot be reached
+  // 2. Safe local-development fallback if the gateway cannot be reached (with timeout)
   try {
     const queryParam = customerId ? `?customerId=${encodeURIComponent(customerId)}` : "";
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
+
     const response = await fetch(`/api/usage-metrics${queryParam}`, {
       method: "GET",
       headers,
-    });
+      signal: controller.signal,
+    }).finally(() => clearTimeout(timeoutId));
 
     if (response.ok) {
       const data = (await response.json()) as PlatformUsageResponse;
@@ -246,16 +254,20 @@ export async function fetchBroadcastUsage(
 ): Promise<BroadcastUsageResponse> {
   const headers = await authHeaders();
 
-  // 1. Direct production gateway as primary source
+  // 1. Direct production gateway as primary source (with timeout)
   try {
     const gatewayAction = customerId
       ? `?action=broadcast-usage&customerId=${encodeURIComponent(customerId)}`
       : "?action=broadcast-usage";
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
+
     const res = await fetch(`${PRODUCTION_GATEWAY_BASE}${gatewayAction}`, {
       method: "GET",
       headers,
-    });
+      signal: controller.signal,
+    }).finally(() => clearTimeout(timeoutId));
 
     if (res.ok) {
       const data = (await res.json()) as BroadcastUsageResponse;
@@ -267,13 +279,17 @@ export async function fetchBroadcastUsage(
     console.warn("Primary gateway broadcast-usage fetch notice:", err);
   }
 
-  // 2. Safe local-development fallback if the gateway cannot be reached
+  // 2. Safe local-development fallback if the gateway cannot be reached (with timeout)
   try {
     const queryParam = customerId ? `?customerId=${encodeURIComponent(customerId)}` : "";
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
+
     const response = await fetch(`/api/broadcast-usage${queryParam}`, {
       method: "GET",
       headers,
-    });
+      signal: controller.signal,
+    }).finally(() => clearTimeout(timeoutId));
 
     if (response.ok) {
       const data = (await response.json()) as BroadcastUsageResponse;

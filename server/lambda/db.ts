@@ -354,7 +354,7 @@ export async function getOperationalPool(): Promise<Pool> {
     password,
     max: maxPoolSize,
     idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 5000,
+    connectionTimeoutMillis: 1500,
     ssl: useSsl,
   });
 

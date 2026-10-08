@@ -367,24 +367,14 @@ let cachedMetadata: Record<string, CustomerMetadataRecord> = {};
 let cachedSubscriptions: SubscriptionItem[] = [];
 
 /**
- * React hook to access and manage customer data.
- * Merges:
- * 1. Gateway/Cognito live users (ApiCustomerRecord)
- * 2. Static real SuperBlock accounts (defaultAllCustomers)
- * 3. Supabase public.customer_metadata (company, industry, plan, owner, tags)
- * 4. Supabase public.subscriptions (active plans, start/renewal dates, billing cycle, MRR, contract value)
- * 5. Appends DB-only customers (e.g. Femmefit) and any subscription-only accounts.
+ * Builds the complete merged customer directory.
+ * Pure function independent of component lifecycles.
  */
-export function useCustomerAnalytics() {
-  const [metadataMap, setMetadataMap] = useState<Record<string, CustomerMetadataRecord>>(() => cachedMetadata);
-  const [subscriptionsList, setSubscriptionsList] = useState<SubscriptionItem[]>(() => cachedSubscriptions);
-
-  const getMerged = useCallback(
-    (
-      apiUsers: ApiCustomerRecord[] = cachedResponse?.users || [],
-      metaMap: Record<string, CustomerMetadataRecord> = metadataMap,
-      subsList: SubscriptionItem[] = subscriptionsList
-    ) => {
+export function buildMergedCustomers(
+  apiUsers: ApiCustomerRecord[] = cachedResponse?.users || [],
+  metaMap: Record<string, CustomerMetadataRecord> = cachedMetadata,
+  subsList: SubscriptionItem[] = cachedSubscriptions
+): Customer[] {
       // Index subscriptions: sort by updatedAt/createdAt descending so newer records take precedence
       const sortedSubs = [...subsList].sort((a, b) => {
         const timeA = new Date(a.updatedAt || a.createdAt || 0).getTime();
@@ -652,11 +642,18 @@ export function useCustomerAnalytics() {
       }
 
       return result;
-    },
-    [metadataMap, subscriptionsList]
-  );
+}
 
-  const [customers, setCustomers] = useState<Customer[]>(() => getMerged());
+/**
+ * React hook to access and manage customer data.
+ */
+export function useCustomerAnalytics() {
+  const [metadataMap, setMetadataMap] = useState<Record<string, CustomerMetadataRecord>>(() => cachedMetadata);
+  const [subscriptionsList, setSubscriptionsList] = useState<SubscriptionItem[]>(() => cachedSubscriptions);
+
+  const [customers, setCustomers] = useState<Customer[]>(() =>
+    buildMergedCustomers(cachedResponse?.users || [], cachedMetadata, cachedSubscriptions)
+  );
   const [rawUsers, setRawUsers] = useState<ApiCustomerRecord[]>(() => cachedResponse?.users || []);
   const [loading, setLoading] = useState<boolean>(() => cachedResponse === null && Object.keys(cachedMetadata).length === 0);
   const [error, setError] = useState<string | null>(null);
@@ -673,18 +670,15 @@ export function useCustomerAnalytics() {
       cachedSubscriptions = subs;
       setMetadataMap(meta);
       setSubscriptionsList(subs);
-      if (data && Array.isArray(data.users) && data.users.length > 0) {
-        setRawUsers(data.users);
-        setCustomers(getMerged(data.users, meta, subs));
-      } else {
-        setCustomers(getMerged([], meta, subs));
-      }
+      const users = data && Array.isArray(data.users) ? data.users : [];
+      setRawUsers(users);
+      setCustomers(buildMergedCustomers(users, meta, subs));
     } catch (err) {
-      setCustomers(getMerged());
+      setCustomers(buildMergedCustomers([], cachedMetadata, cachedSubscriptions));
     } finally {
       setLoading(false);
     }
-  }, [getMerged]);
+  }, []);
 
   useEffect(() => {
     loadData();
@@ -699,9 +693,9 @@ export function useCustomerAnalytics() {
         cachedSubscriptions = subs;
         setMetadataMap(meta);
         setSubscriptionsList(subs);
-        setCustomers(getMerged(cachedResponse?.users || [], meta, subs));
+        setCustomers(buildMergedCustomers(cachedResponse?.users || [], meta, subs));
       } catch {
-        setCustomers(getMerged());
+        setCustomers(buildMergedCustomers([], cachedMetadata, cachedSubscriptions));
       }
     };
 
@@ -713,7 +707,7 @@ export function useCustomerAnalytics() {
         window.removeEventListener("subscriptions-updated", handleUpdate);
       };
     }
-  }, [loadData, getMerged]);
+  }, [loadData]);
 
   return {
     customers,

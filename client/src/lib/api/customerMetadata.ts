@@ -22,7 +22,11 @@ export interface CustomerMetadataResponse {
  */
 export async function getAllCustomerMetadata(): Promise<Record<string, CustomerMetadataRecord>> {
   try {
-    const res = await fetch("/api/customer-metadata");
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    const res = await fetch("/api/customer-metadata", { signal: controller.signal }).finally(() =>
+      clearTimeout(timeoutId)
+    );
     if (!res.ok) return {};
     const data: CustomerMetadataResponse = await res.json();
     if (!data.success || !Array.isArray(data.metadata)) return {};
@@ -46,7 +50,11 @@ export async function getAllCustomerMetadata(): Promise<Record<string, CustomerM
 export async function getCustomerMetadata(customerId: string): Promise<CustomerMetadataRecord | null> {
   if (!customerId) return null;
   try {
-    const res = await fetch(`/api/customer-metadata/${encodeURIComponent(customerId)}`);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    const res = await fetch(`/api/customer-metadata/${encodeURIComponent(customerId)}`, {
+      signal: controller.signal,
+    }).finally(() => clearTimeout(timeoutId));
     if (!res.ok) return null;
     const data = await res.json();
     return data?.metadata || null;
