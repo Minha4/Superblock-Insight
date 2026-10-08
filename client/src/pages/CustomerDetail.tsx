@@ -123,6 +123,7 @@ import { formatCurrency, formatNumber } from "@/lib/utils";
 import {
   type Activity as CustomerActivity,
   type Customer,
+  type CustomerStatus,
   type Invoice,
   type Note,
   type Offering,
@@ -179,9 +180,88 @@ export default function CustomerDetail() {
   const [offering, setOffering] = useState<Offering | null>(null);
   const [invoice, setInvoice] = useState<Invoice | null>(null);
 
+  const [directCustomer, setDirectCustomer] = useState<Customer | null>(null);
+
+  useEffect(() => {
+    if (!apiCustomers.some((c) => c.id === params.id || c.company?.toLowerCase() === params.id?.toLowerCase()) && params.id) {
+      Promise.all([
+        getCustomerMetadata(params.id),
+        getCustomerSubscriptions(params.id),
+      ])
+        .then(([meta, subs]) => {
+          if (meta) {
+            const tags = meta.tags || [];
+            const getTag = (p: string) => {
+              const t = tags.find((x) => x.toLowerCase().startsWith(p.toLowerCase()));
+              return t ? t.slice(p.length).trim() : "";
+            };
+            const activeSub = Array.isArray(subs) && subs.length > 0 ? subs[0] : null;
+            const subStatus = activeSub?.status || (meta.plan?.toLowerCase() === "trial" ? "Trial" : "Active");
+            const isSubActive = subStatus.toLowerCase().includes("active");
+
+            setDirectCustomer({
+              id: meta.customer_id,
+              company: meta.company_name || params.id,
+              industry: meta.industry || "General Business",
+              region: getTag("WABA:") ? `Account: ${getTag("WABA:")}` : `ID: ${meta.customer_id.slice(0, 8)}`,
+              initials: getInitials(meta.company_name || params.id),
+              contact: {
+                name: getTag("Contact:") || meta.company_name || "—",
+                email: getTag("Email:") || "—",
+                phone: getTag("Phone:") || "—",
+              },
+              activatedAt: formatActivatedDate(meta.created_at),
+              status: (isSubActive ? "Active" : "Trial") as CustomerStatus,
+              plan: meta.plan || activeSub?.plan_name || "Trial",
+              subscription: {
+                status: subStatus,
+                startDate: activeSub?.current_period_start || formatActivatedDate(meta.created_at),
+                renewalDate: activeSub?.current_period_end || "—",
+                billingCycle: "Annual",
+                mrr: activeSub?.mrr ? Number(activeSub.mrr) : 0,
+                contractValue: activeSub?.mrr ? Number(activeSub.mrr) * 12 : 0,
+                paymentStatus: isSubActive ? "Current" : "Pending",
+              },
+              renewal: activeSub?.current_period_end || "—",
+              usage: {
+                messages: 0,
+                broadcasts: 0,
+                conversations: 0,
+                email: 0,
+                sms: 0,
+                whatsapp: 0,
+                api: 0,
+                automations: 0,
+                storage: 0,
+                contacts: 0,
+              },
+              offerings: [],
+              notes: [],
+              meetings: [],
+              credentials: [],
+              invoices: [],
+              activities: [],
+              health: {
+                score: 85,
+                status: "Healthy",
+                usageTrend: "Stable",
+                loginFrequency: "—",
+                riskReason: "—",
+              },
+              owner: meta.resolved_owner_name
+                ? { name: meta.resolved_owner_name, initials: getInitials(meta.resolved_owner_name) }
+                : { name: "—", initials: "—" },
+              lastActivity: "—",
+            });
+          }
+        })
+        .catch(() => null);
+    }
+  }, [apiCustomers, params.id]);
+
   const rawCustomer = useMemo(() => {
     const list = apiCustomers.length > 0 ? apiCustomers : defaultAllCustomers;
-    return (
+    const found =
       list.find(
         (item) =>
           item.id === params.id ||
@@ -194,9 +274,9 @@ export default function CustomerDetail() {
           item.id.toLowerCase() === params.id?.toLowerCase() ||
           item.company?.toLowerCase() === params.id?.toLowerCase()
       ) ||
-      null
-    );
-  }, [apiCustomers, params.id]);
+      null;
+    return found || directCustomer;
+  }, [apiCustomers, params.id, directCustomer]);
 
   const matchingRawUser = useMemo(() => {
     if (!rawCustomer?.id || !rawUsers || rawUsers.length === 0) return null;
