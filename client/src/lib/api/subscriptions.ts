@@ -53,7 +53,7 @@ export async function getSubscriptions(customerId?: string): Promise<Subscriptio
   try {
     const url = customerId ? `/api/subscriptions?customerId=${encodeURIComponent(customerId)}` : "/api/subscriptions";
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    const timeoutId = setTimeout(() => controller.abort(), 12000);
     const res = await fetch(url, { signal: controller.signal }).finally(() => clearTimeout(timeoutId));
     if (res.ok) {
       const data = await res.json();

@@ -116,7 +116,18 @@ export default function AnalyticsStudio() {
   const { customers, loading: analyticsLoading, refresh: reloadAnalytics } = useCustomerAnalytics();
   const { data: usageData, loading: usageLoading, refresh: reloadUsage } = useUsageMetrics();
 
-  const [subscriptions, setSubscriptions] = useState<any[]>([]);
+  const [subscriptions, setSubscriptions] = useState<any[]>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const raw = localStorage.getItem("analytics_studio_custom_subscriptions");
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        }
+      } catch {}
+    }
+    return [];
+  });
   const [subsLoading, setSubsLoading] = useState<boolean>(true);
 
   const [activities, setActivities] = useState<any[]>([]);
@@ -132,24 +143,37 @@ export default function AnalyticsStudio() {
   const loadSubscriptions = useCallback(async () => {
     setSubsLoading(true);
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    const timeoutId = setTimeout(() => controller.abort(), 12000);
     try {
       const res = await fetch("/api/subscriptions", { signal: controller.signal });
       if (res.ok) {
         const json = await res.json();
-        if (json?.success && Array.isArray(json?.subscriptions)) {
+        if (json?.success && Array.isArray(json?.subscriptions) && json.subscriptions.length > 0) {
           setSubscriptions(json.subscriptions);
-        } else {
-          setSubscriptions([]);
+          try {
+            localStorage.setItem("analytics_studio_custom_subscriptions", JSON.stringify(json.subscriptions));
+          } catch {}
+          return;
         }
-      } else {
-        setSubscriptions([]);
       }
-    } catch {
-      setSubscriptions([]);
+    } catch (err) {
+      console.warn("Could not fetch subscriptions from backend:", err);
     } finally {
       clearTimeout(timeoutId);
       setSubsLoading(false);
+    }
+
+    // Fallback: If state is still empty, load from localStorage if available
+    if (typeof window !== "undefined") {
+      try {
+        const raw = localStorage.getItem("analytics_studio_custom_subscriptions");
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setSubscriptions((prev) => (prev.length > 0 ? prev : parsed));
+          }
+        }
+      } catch {}
     }
   }, []);
 
@@ -205,6 +229,16 @@ export default function AnalyticsStudio() {
     loadSubscriptions();
     loadActivities();
     loadTickets();
+
+    const onSubsUpdated = () => {
+      loadSubscriptions();
+    };
+    if (typeof window !== "undefined") {
+      window.addEventListener("subscriptions-updated", onSubsUpdated);
+      return () => {
+        window.removeEventListener("subscriptions-updated", onSubsUpdated);
+      };
+    }
   }, [loadSubscriptions, loadActivities, loadTickets]);
 
   const toggleMetric = (metric: string) =>
@@ -305,9 +339,25 @@ export default function AnalyticsStudio() {
       }
     }
 
-    const activeSubs = subscriptions.filter(
-      (s) => (s.status || "").toLowerCase() === "active"
-    );
+    const activeSubs = subscriptions.length > 0
+      ? subscriptions.filter(
+          (s) => (s.status || "").toLowerCase() === "active"
+        )
+      : customers
+          .filter((c) => (c.subscription?.status || "").toLowerCase() === "active")
+          .map((c) => ({
+            id: c.id,
+            customer: c.company,
+            customer_name: c.company,
+            status: c.subscription.status,
+            amount: c.subscription.contractValue || c.subscription.mrr,
+            mrr: c.subscription.mrr,
+            created_at: c.subscription.startDate,
+            start_date: c.subscription.startDate,
+            renewalDate: c.subscription.renewalDate,
+            end_date: c.subscription.renewalDate,
+          }));
+
     const totalMrr = activeSubs.reduce(
       (sum, s) => sum + (Number(s.amount) || Number(s.mrr) || 0),
       0
@@ -315,7 +365,22 @@ export default function AnalyticsStudio() {
 
     const nowTime = Date.now();
     const in30DaysTime = nowTime + 30 * 24 * 60 * 60 * 1000;
-    const renewalsDue = subscriptions.filter((s) => {
+    const allSubs = subscriptions.length > 0
+      ? subscriptions
+      : customers
+          .filter((c) => c.subscription && c.subscription.status && c.subscription.status !== "—")
+          .map((c) => ({
+            id: c.id,
+            customer: c.company,
+            status: c.subscription.status,
+            amount: c.subscription.contractValue || c.subscription.mrr,
+            mrr: c.subscription.mrr,
+            start_date: c.subscription.startDate,
+            renewalDate: c.subscription.renewalDate,
+            end_date: c.subscription.renewalDate,
+          }));
+
+    const renewalsDue = allSubs.filter((s) => {
       const status = (s.status || "").toLowerCase();
       if (status === "renewal due" || status === "renewal_due") return true;
       const dateStr = s.end_date || s.renewalDate;
@@ -570,7 +635,13 @@ export default function AnalyticsStudio() {
 
   const growthStatus = useMemo(() => {
     const active = customers.filter((c) => c.status === "Active").length;
-    const churned = subscriptions.filter((s) => {
+    const allSubs = subscriptions.length > 0
+      ? subscriptions
+      : customers
+          .filter((c) => c.subscription && c.subscription.status)
+          .map((c) => ({ status: c.subscription.status }));
+
+    const churned = allSubs.filter((s) => {
       const st = (s.status || "").toLowerCase();
       return st === "cancelled" || st === "expired";
     }).length;
@@ -604,7 +675,19 @@ export default function AnalyticsStudio() {
     });
 
     const subMrrMap = new Map<string, number>();
-    subscriptions.forEach((s) => {
+    const effectiveSubs = subscriptions.length > 0
+      ? subscriptions
+      : customers
+          .filter((c) => c.subscription && (c.subscription.mrr || c.subscription.contractValue))
+          .map((c) => ({
+            customer_id: c.id,
+            customer: c.company,
+            customer_name: c.company,
+            amount: c.subscription.contractValue || c.subscription.mrr,
+            mrr: c.subscription.mrr,
+          }));
+
+    effectiveSubs.forEach((s) => {
       const amt = Number(s.amount) || Number(s.mrr) || 0;
       if (s.customer_id) subMrrMap.set(s.customer_id.toLowerCase(), (subMrrMap.get(s.customer_id.toLowerCase()) || 0) + amt);
       if (s.customer_name) subMrrMap.set(s.customer_name.toLowerCase(), (subMrrMap.get(s.customer_name.toLowerCase()) || 0) + amt);
