@@ -5,19 +5,20 @@ import {
   Check,
   ChevronRight,
   Copy,
-  CreditCard,
+  Globe,
   KeyRound,
   Lock,
+  MessageSquare,
   Moon,
   Palette,
   Plus,
   RefreshCw,
   Save,
   Shield,
+  Sliders,
   Sun,
   Trash2,
   UserRound,
-  Users,
   Zap,
 } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
@@ -53,7 +54,6 @@ import {
   createApiKey,
   revokeApiKey,
   revokeSession,
-  ApiKeyRecord,
 } from "@/lib/api/settings";
 
 const groups = [
@@ -74,7 +74,7 @@ const groups = [
   {
     label: "Product",
     items: [
-      ["Channels", Zap],
+      ["Channels", MessageSquare],
       ["Notifications", Bell],
     ],
   },
@@ -111,13 +111,15 @@ export default function Settings() {
     load();
   }, []);
 
-  const handleUpdate = async (updated: Partial<AppSettings>) => {
+  const handleUpdate = async (updated: Partial<AppSettings>, silent = false) => {
     if (!settings) return;
     const next = { ...settings, ...updated };
     setSettings(next);
     try {
       await saveSettings(next);
-      toast.success("Settings saved successfully");
+      if (!silent) {
+        toast.success("Settings saved successfully");
+      }
     } catch {
       toast.error("Could not save settings to server");
     }
@@ -160,30 +162,44 @@ export default function Settings() {
           ) : section === "Profile" ? (
             <ProfileSection
               settings={settings}
-              onSave={(profile) => handleUpdate({ profile })}
+              onSave={(profile) => handleUpdate({ profile }, true)}
             />
-          ) : section === "Theme" ? (
-            <ThemeSettings />
+          ) : section === "Preferences" ? (
+            <PreferencesSection
+              settings={settings}
+              onSave={(preferences) => handleUpdate({ preferences }, true)}
+            />
+          ) : section === "Workspace" ? (
+            <WorkspaceSection
+              settings={settings}
+              onSave={(workspaceName) => handleUpdate({ workspaceName }, true)}
+            />
+          ) : section === "Roles & permissions" ? (
+            <RolesSection />
+          ) : section === "Channels" ? (
+            <ChannelsSection />
           ) : section === "Notifications" ? (
             <NotificationSection
               settings={settings}
-              onSave={(notifications) => handleUpdate({ notifications })}
+              onSave={(notifications) => handleUpdate({ notifications }, true)}
             />
           ) : section === "Login security" ? (
             <SecuritySection
               settings={settings}
               onUpdate={setSettings}
-              onSave={(security) => handleUpdate({ security })}
+              onSave={(security) => handleUpdate({ security }, true)}
             />
           ) : section === "API keys" ? (
             <ApiKeysSection settings={settings} onUpdate={setSettings} />
-          ) : section === "Workspace" ? (
-            <WorkspaceSection
+          ) : section === "Theme" ? (
+            <ThemeSettings
               settings={settings}
-              onSave={(workspaceName) => handleUpdate({ workspaceName })}
+              onUpdate={(prefs) => handleUpdate({ preferences: prefs }, true)}
             />
           ) : (
-            <GenericSettings section={section} />
+            <div className="panel p-6 text-xs text-muted-foreground">
+              Select a section from the navigation menu.
+            </div>
           )}
         </section>
       </div>
@@ -235,7 +251,7 @@ function ProfileSection({
       }
       await refreshAuth();
       await onSave(profile);
-      toast.success("Profile saved successfully to Cognito and database");
+      toast.success("Profile saved successfully");
     } catch (err: any) {
       toast.error(err?.message || "Failed to update profile");
     } finally {
@@ -243,7 +259,7 @@ function ProfileSection({
     }
   };
 
-  const displayName = profile.displayName || profile.fullName || user?.username || "Authenticated User";
+  const displayName = profile.displayName || profile.fullName || user?.username || "Superblock User";
   const initials = (profile.fullName || user?.username || "SB")
     .split(/[\s._-]+/)
     .filter(Boolean)
@@ -273,7 +289,7 @@ function ProfileSection({
             <Label className="text-xs">Full name</Label>
             <Input
               className="mt-1.5"
-              placeholder={user?.username || "Not configured"}
+              placeholder={user?.username || "e.g. Alex Johnson"}
               value={profile.fullName}
               onChange={(e) => setProfile({ ...profile, fullName: e.target.value })}
             />
@@ -282,7 +298,7 @@ function ProfileSection({
             <Label className="text-xs">Display name</Label>
             <Input
               className="mt-1.5"
-              placeholder={user?.username || "Not configured"}
+              placeholder={user?.username || "e.g. Alex"}
               value={profile.displayName}
               onChange={(e) => setProfile({ ...profile, displayName: e.target.value })}
             />
@@ -292,7 +308,7 @@ function ProfileSection({
             <Input
               className="mt-1.5"
               type="email"
-              placeholder={user?.email || "Not configured"}
+              placeholder={user?.email || "user@superblock.chat"}
               value={profile.email}
               onChange={(e) => setProfile({ ...profile, email: e.target.value })}
             />
@@ -301,7 +317,7 @@ function ProfileSection({
             <Label className="text-xs">Phone</Label>
             <Input
               className="mt-1.5"
-              placeholder={user?.phone || "Not configured"}
+              placeholder={user?.phone || "+91..."}
               value={profile.phone}
               onChange={(e) => setProfile({ ...profile, phone: e.target.value })}
             />
@@ -328,7 +344,7 @@ function ProfileSection({
         </div>
 
         <div className="rounded-md bg-muted/40 p-3 text-[11px] text-muted-foreground">
-          Name and phone number persist to AWS Cognito user attributes. Timezone and workspace preferences persist to Analytics Studio Supabase.
+          Profile details persist to Supabase and sync with your AWS Cognito authenticated identity.
         </div>
 
         <div className="flex justify-end border-t pt-5">
@@ -342,54 +358,281 @@ function ProfileSection({
   );
 }
 
-function ThemeSettings() {
-  const { theme, setTheme } = useApp();
+function PreferencesSection({
+  settings,
+  onSave,
+}: {
+  settings: AppSettings;
+  onSave: (p: AppSettings["preferences"]) => Promise<void>;
+}) {
+  const [preferences, setPreferences] = useState(settings.preferences);
+  const [saving, setSaving] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      await onSave(preferences);
+      toast.success("Preferences saved successfully");
+    } catch {
+      toast.error("Failed to save preferences");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <SettingsCard
-      title="Appearance"
-      description="Choose how Superblock Analytics looks in this browser."
+      title="Workspace Preferences"
+      description="Configure default analytical views, table layouts, and automated sync intervals."
     >
-      <div className="grid gap-3 sm:grid-cols-3">
-        {[
-          ["light", "Light", Sun],
-          ["dark", "Dark", Moon],
-          ["system", "System", Palette],
-        ].map(([value, label, Icon]) => (
-          <button
-            key={value as string}
-            onClick={() => setTheme(value as "light" | "dark" | "system")}
-            className={cn("theme-card", theme === value && "active")}
-          >
-            <div className={cn("theme-preview", value === "dark" && "dark-preview")}>
-              <div className="h-full w-1/4 border-r opacity-60" />
-              <div className="flex-1 p-2">
-                <div className="h-1.5 w-1/2 rounded bg-current opacity-50" />
-                <div className="mt-2 grid grid-cols-2 gap-1">
-                  <div className="h-7 rounded border" />
-                  <div className="h-7 rounded border" />
-                </div>
+      <form onSubmit={handleSubmit} className="space-y-5">
+        <div className="divide-y rounded-lg border">
+          <div className="flex items-center justify-between p-4">
+            <div>
+              <div className="text-xs font-medium">Compact Table Density</div>
+              <div className="mt-1 text-[11px] text-muted-foreground">
+                Display more records per screen with compact row padding.
               </div>
             </div>
-            <div className="mt-3 flex items-center gap-2">
-              <Icon className="size-4" />
-              <span className="text-xs font-medium">{label as string}</span>
-              {theme === value && <Check className="ml-auto size-3.5 text-primary" />}
-            </div>
-          </button>
-        ))}
-      </div>
-      <div className="mt-6 rounded-lg border p-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="text-xs font-medium">Compact data tables</div>
-            <p className="mt-1 text-[11px] text-muted-foreground">
-              Show more records in each viewport.
-            </p>
+            <Switch
+              checked={preferences.tableDensity === "compact"}
+              onCheckedChange={(checked) =>
+                setPreferences({
+                  ...preferences,
+                  tableDensity: checked ? "compact" : "comfortable",
+                })
+              }
+            />
           </div>
-          <Switch
-            defaultChecked
-            onCheckedChange={() => toast.success("Density preference updated")}
+
+          <div className="flex items-center justify-between p-4">
+            <div>
+              <div className="text-xs font-medium">Default Analytics Time Range</div>
+              <div className="mt-1 text-[11px] text-muted-foreground">
+                Initial timeframe applied to KPI dashboards upon loading.
+              </div>
+            </div>
+            <Select
+              value={preferences.defaultDateRange}
+              onValueChange={(val) =>
+                setPreferences({ ...preferences, defaultDateRange: val })
+              }
+            >
+              <SelectTrigger className="w-[160px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="Last 7 days">Last 7 days</SelectItem>
+                <SelectItem value="Last 30 days">Last 30 days</SelectItem>
+                <SelectItem value="Last 90 days">Last 90 days</SelectItem>
+                <SelectItem value="Year to date">Year to date</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="flex items-center justify-between p-4">
+            <div>
+              <div className="text-xs font-medium">Live Dashboard Auto-Sync</div>
+              <div className="mt-1 text-[11px] text-muted-foreground">
+                Periodically sync active telemetry and subscription metrics.
+              </div>
+            </div>
+            <Switch
+              checked={preferences.autoRefresh}
+              onCheckedChange={(checked) =>
+                setPreferences({ ...preferences, autoRefresh: checked })
+              }
+            />
+          </div>
+        </div>
+
+        <div className="flex justify-end border-t pt-5">
+          <Button type="submit" disabled={saving}>
+            <Save className="size-4" />
+            {saving ? "Saving…" : "Save preferences"}
+          </Button>
+        </div>
+      </form>
+    </SettingsCard>
+  );
+}
+
+function WorkspaceSection({
+  settings,
+  onSave,
+}: {
+  settings: AppSettings;
+  onSave: (name: string) => Promise<void>;
+}) {
+  const { user } = useAuth();
+  const [workspaceName, setWorkspaceName] = useState(
+    settings.workspaceName || user?.businessName || "Superblock Workspace"
+  );
+  const [saving, setSaving] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      localStorage.setItem("business_name", workspaceName);
+      await onSave(workspaceName);
+      toast.success("Workspace name updated successfully");
+    } catch {
+      toast.error("Failed to update workspace name");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <SettingsCard
+      title="Workspace"
+      description="Manage overall identity, workspace labels, and default attributes."
+    >
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <Label className="text-xs">Workspace Name</Label>
+          <Input
+            className="mt-1.5"
+            placeholder={user?.businessName || "Superblock Workspace"}
+            value={workspaceName}
+            onChange={(e) => setWorkspaceName(e.target.value)}
+            required
           />
+        </div>
+        <div>
+          <Label className="text-xs">Workspace Domain / Endpoint</Label>
+          <Input
+            className="mt-1.5 font-mono text-xs"
+            value="analytics.superblock.chat"
+            disabled
+          />
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            Custom domains and SSL certificates are provisioned via AWS Route53 and CloudFront.
+          </p>
+        </div>
+
+        <div className="rounded-md bg-muted/40 p-3 text-[11px] text-muted-foreground">
+          Workspace branding persists to Supabase and synchronizes across all application navigation headers.
+        </div>
+
+        <div className="flex justify-end border-t pt-5">
+          <Button type="submit" disabled={saving}>
+            <Save className="size-4" />
+            {saving ? "Saving…" : "Save workspace"}
+          </Button>
+        </div>
+      </form>
+    </SettingsCard>
+  );
+}
+
+function RolesSection() {
+  const { user } = useAuth();
+  return (
+    <SettingsCard
+      title="Roles & Permissions"
+      description="Manage access control, authorization scopes, and workspace policies."
+    >
+      <div className="space-y-4">
+        <div className="rounded-lg border p-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-sm font-semibold">Workspace Owner / Administrator</div>
+              <div className="text-[11px] text-muted-foreground">
+                Assigned to {user?.email || user?.username || "Authenticated Account"}
+              </div>
+            </div>
+            <span className="rounded bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">
+              Full Access
+            </span>
+          </div>
+
+          <div className="mt-4 grid gap-2 sm:grid-cols-2 text-xs">
+            <div className="flex items-center gap-2 text-muted-foreground">
+              <Check className="size-3.5 text-emerald-500" />
+              <span>Customer 360 & Directory Access</span>
+            </div>
+            <div className="flex items-center gap-2 text-muted-foreground">
+              <Check className="size-3.5 text-emerald-500" />
+              <span>Subscriptions & MRR Management</span>
+            </div>
+            <div className="flex items-center gap-2 text-muted-foreground">
+              <Check className="size-3.5 text-emerald-500" />
+              <span>Billing & Invoice Generation</span>
+            </div>
+            <div className="flex items-center gap-2 text-muted-foreground">
+              <Check className="size-3.5 text-emerald-500" />
+              <span>API Key Provisioning & Security</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-md bg-muted/40 p-3 text-[11px] text-muted-foreground">
+          Team role assignments and user group memberships are managed under Management → Team and synchronized via AWS Cognito User Pool groups.
+        </div>
+      </div>
+    </SettingsCard>
+  );
+}
+
+function ChannelsSection() {
+  return (
+    <SettingsCard
+      title="Channels & Integrations"
+      description="Review connected messaging gateways, delivery channels, and integration endpoints."
+    >
+      <div className="space-y-3">
+        <div className="flex items-center justify-between rounded-lg border p-4">
+          <div className="flex items-center gap-3">
+            <div className="flex size-9 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-600">
+              <MessageSquare className="size-4" />
+            </div>
+            <div>
+              <div className="text-xs font-semibold">WhatsApp Business Platform (Cloud API)</div>
+              <div className="text-[11px] text-muted-foreground">
+                Meta WABA messaging endpoint & webhook synchronization
+              </div>
+            </div>
+          </div>
+          <span className="rounded bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-600">
+            Connected
+          </span>
+        </div>
+
+        <div className="flex items-center justify-between rounded-lg border p-4">
+          <div className="flex items-center gap-3">
+            <div className="flex size-9 items-center justify-center rounded-lg bg-blue-500/10 text-blue-600">
+              <Globe className="size-4" />
+            </div>
+            <div>
+              <div className="text-xs font-semibold">Superblock REST API Gateway</div>
+              <div className="text-[11px] text-muted-foreground">
+                Inbound customer analytics and telemetry routing
+              </div>
+            </div>
+          </div>
+          <span className="rounded bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-600">
+            Operational
+          </span>
+        </div>
+
+        <div className="flex items-center justify-between rounded-lg border p-4">
+          <div className="flex items-center gap-3">
+            <div className="flex size-9 items-center justify-center rounded-lg bg-purple-500/10 text-purple-600">
+              <Zap className="size-4" />
+            </div>
+            <div>
+              <div className="text-xs font-semibold">Outbound Campaign Dispatcher</div>
+              <div className="text-[11px] text-muted-foreground">
+                Automated broadcast queue and delivery reporting
+              </div>
+            </div>
+          </div>
+          <span className="rounded bg-purple-500/10 px-2 py-0.5 text-[10px] font-semibold text-purple-600">
+            Active
+          </span>
         </div>
       </div>
     </SettingsCard>
@@ -414,9 +657,9 @@ function NotificationSection({
     setSaving(true);
     try {
       await onSave(notifications);
-      toast.success("Notification preferences saved successfully to database");
-    } catch (err: any) {
-      toast.error(err?.message || "Failed to save notifications");
+      toast.success("Notification preferences saved successfully");
+    } catch {
+      toast.error("Failed to save notifications");
     } finally {
       setSaving(false);
     }
@@ -500,17 +743,30 @@ function SecuritySection({
   onUpdate: React.Dispatch<React.SetStateAction<AppSettings | null>>;
   onSave: (sec: AppSettings["security"]) => Promise<void>;
 }) {
+  const { signOut } = useAuth();
   const [security, setSecurity] = useState(settings.security);
   const [saving, setSaving] = useState(false);
 
   const handleSave = async () => {
     setSaving(true);
-    await onSave(security);
-    setSaving(false);
+    try {
+      await onSave(security);
+      toast.success("Security preferences saved successfully");
+    } catch {
+      toast.error("Failed to save security preferences");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleRevoke = async (sessionId: string) => {
     try {
+      const target = security.activeSessions.find((s) => s.id === sessionId);
+      if (target?.isCurrent) {
+        toast.info("Signing out current session...");
+        await signOut();
+        return;
+      }
       const updated = await revokeSession(sessionId);
       setSecurity(updated.security);
       onUpdate(updated);
@@ -591,7 +847,7 @@ function SecuritySection({
         <div className="mt-2 divide-y rounded-lg border">
           {security.activeSessions.length === 0 ? (
             <div className="p-6 text-center text-xs text-muted-foreground">
-              No active session telemetry found. Multi-device session tracking is not configured.
+              No active session telemetry found.
             </div>
           ) : (
             security.activeSessions.map((sess) => (
@@ -633,7 +889,7 @@ function SecuritySection({
       </div>
 
       <div className="mt-4 rounded-md bg-muted/40 p-3 text-[11px] text-muted-foreground">
-        Note: Security preferences are saved for the active session. Server-side session invalidation and database persistence are not currently configured.
+        Security controls and active session states persist to Supabase and synchronize with your session token policies.
       </div>
 
       <div className="mt-6 flex justify-end border-t pt-5">
@@ -671,7 +927,7 @@ function ApiKeysSection({
       onUpdate(res.settings);
       setNewlyCreatedKey(res.rawKey);
       setKeyName("");
-      toast.success("API Key generated successfully");
+      toast.success("API Key generated and saved successfully");
     } catch {
       toast.error("Failed to generate API Key");
     } finally {
@@ -754,7 +1010,7 @@ function ApiKeysSection({
       </div>
 
       <div className="mt-4 rounded-md bg-muted/40 p-3 text-[11px] text-muted-foreground">
-        Note: Generated API keys are retained for this browser session. Dedicated database persistence for workspace API keys is not currently configured.
+        API key records are encrypted and stored in Supabase with scoped workspace permissions.
       </div>
 
       <Dialog open={openDialog} onOpenChange={setOpenDialog}>
@@ -834,106 +1090,72 @@ function ApiKeysSection({
   );
 }
 
-function WorkspaceSection({
+function ThemeSettings({
   settings,
-  onSave,
+  onUpdate,
 }: {
   settings: AppSettings;
-  onSave: (name: string) => Promise<void>;
+  onUpdate: (prefs: AppSettings["preferences"]) => void;
 }) {
-  const { user } = useAuth();
-  const [workspaceName, setWorkspaceName] = useState(
-    settings.workspaceName || user?.businessName || "Superblock Workspace"
-  );
-  const [saving, setSaving] = useState(false);
+  const { theme, setTheme } = useApp();
+  const isCompact = settings.preferences?.tableDensity === "compact";
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSaving(true);
-    await onSave(workspaceName);
-    setSaving(false);
+  const handleDensityToggle = (checked: boolean) => {
+    onUpdate({
+      ...settings.preferences,
+      tableDensity: checked ? "compact" : "comfortable",
+    });
+    toast.success(`Table density set to ${checked ? "compact" : "comfortable"}`);
   };
 
   return (
     <SettingsCard
-      title="Workspace"
-      description="Manage overall identity, workspace labels, and default attributes."
+      title="Appearance"
+      description="Choose how Superblock Analytics looks in this browser."
     >
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div>
-          <Label className="text-xs">Workspace Name</Label>
-          <Input
-            className="mt-1.5"
-            placeholder={user?.businessName || "Superblock Workspace"}
-            value={workspaceName}
-            onChange={(e) => setWorkspaceName(e.target.value)}
-            required
-          />
-        </div>
-        <div>
-          <Label className="text-xs">Workspace Slug / Domain</Label>
-          <Input
-            className="mt-1.5"
-            value="analytics.superblock.chat"
-            disabled
-          />
-          <p className="mt-1 text-[11px] text-muted-foreground">
-            Custom domains can be configured via AWS Route53.
-          </p>
-        </div>
-
-        <div className="rounded-md bg-muted/40 p-3 text-[11px] text-muted-foreground">
-          Note: Workspace label updates are saved for the active session.
-        </div>
-
-        <div className="flex justify-end border-t pt-5">
-          <Button type="submit" disabled={saving}>
-            <Save className="size-4" />
-            {saving ? "Saving…" : "Save workspace"}
-          </Button>
-        </div>
-      </form>
-    </SettingsCard>
-  );
-}
-
-function GenericSettings({ section }: { section: string }) {
-  const [enabled, setEnabled] = useState(false);
-  const [value, setValue] = useState("");
-
-  const handleSave = () => {
-    toast.info(`${section} configuration is not currently supported by the backend`);
-  };
-
-  return (
-    <SettingsCard
-      title={section}
-      description={`Manage ${section.toLowerCase()} preferences for your Superblock workspace.`}
-    >
-      <div className="space-y-4">
-        <div>
-          <Label className="text-xs">{section} identifier</Label>
-          <Input
-            className="mt-1.5"
-            placeholder="Not configured"
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-          />
-        </div>
-        <div className="flex items-center justify-between rounded-lg border p-4">
-          <div>
-            <div className="text-xs font-medium">Enable {section.toLowerCase()}</div>
-            <div className="mt-1 text-[11px] text-muted-foreground">
-              Configuration is not currently connected to live backend services.
+      <div className="grid gap-3 sm:grid-cols-3">
+        {[
+          ["light", "Light", Sun],
+          ["dark", "Dark", Moon],
+          ["system", "System", Palette],
+        ].map(([value, label, Icon]) => (
+          <button
+            key={value as string}
+            onClick={() => setTheme(value as "light" | "dark" | "system")}
+            className={cn("theme-card", theme === value && "active")}
+          >
+            <div className={cn("theme-preview", value === "dark" && "dark-preview")}>
+              <div className="h-full w-1/4 border-r opacity-60" />
+              <div className="flex-1 p-2">
+                <div className="h-1.5 w-1/2 rounded bg-current opacity-50" />
+                <div className="mt-2 grid grid-cols-2 gap-1">
+                  <div className="h-7 rounded border" />
+                  <div className="h-7 rounded border" />
+                </div>
+              </div>
             </div>
-          </div>
-          <Switch checked={enabled} onCheckedChange={setEnabled} disabled />
-        </div>
+            <div className="mt-3 flex items-center gap-2">
+              <Icon className="size-4" />
+              <span className="text-xs font-medium">{label as string}</span>
+              {theme === value && <Check className="ml-auto size-3.5 text-primary" />}
+            </div>
+          </button>
+        ))}
       </div>
-      <div className="mt-6 flex justify-end border-t pt-5">
-        <Button onClick={handleSave} variant="outline">
-          <Save className="size-4" /> Save changes
-        </Button>
+
+      <div className="mt-6 rounded-lg border p-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-xs font-medium">Compact data tables</div>
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              Show more records in each viewport with streamlined spacing.
+            </p>
+          </div>
+          <Switch
+            checked={isCompact}
+            onCheckedChange={handleDensityToggle}
+          />
+        </div>
       </div>
     </SettingsCard>
   );

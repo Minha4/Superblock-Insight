@@ -1412,21 +1412,27 @@ app.post("/api/gateway-login", async (req, res) => {
       const userId = (req.query.userId as string) || (req.headers["x-user-id"] as string) || "default_user";
       const sql = `
         SELECT * FROM public.user_settings
-        WHERE user_id = $1
+        WHERE user_id = $1 OR user_id = 'default_user'
+        ORDER BY CASE WHEN user_id = $1 THEN 0 ELSE 1 END, updated_at DESC
         LIMIT 1;
       `;
       const result = await query(sql, [userId]);
       if (result.rows.length > 0) {
         const row = result.rows[0];
+        const profileData = (typeof row.profile_data === "object" && row.profile_data !== null) ? row.profile_data : {};
+        const securitySettings = (typeof row.security_settings === "object" && row.security_settings !== null) ? row.security_settings : {};
+        const apiKeys = Array.isArray(row.api_keys) ? row.api_keys : [];
+        const preferences = (typeof row.preferences === "object" && row.preferences !== null) ? row.preferences : {};
+
         return res.json({
           success: true,
           settings: {
             profile: {
-              fullName: "",
-              displayName: "",
-              email: "",
-              phone: "",
-              timezone: row.timezone || "utc",
+              fullName: profileData.fullName || "",
+              displayName: profileData.displayName || "",
+              email: profileData.email || "",
+              phone: profileData.phone || "",
+              timezone: profileData.timezone || row.timezone || "utc",
             },
             notifications: {
               renewalAlerts: row.renewal_alerts ?? true,
@@ -1435,13 +1441,18 @@ app.post("/api/gateway-login", async (req, res) => {
               productUpdates: row.product_updates ?? false,
             },
             security: {
-              twoFactorEnabled: false,
-              loginAlerts: false,
-              sessionTimeoutHours: "8",
-              activeSessions: [],
+              twoFactorEnabled: securitySettings.twoFactorEnabled ?? false,
+              loginAlerts: securitySettings.loginAlerts ?? false,
+              sessionTimeoutHours: securitySettings.sessionTimeoutHours || "8",
+              activeSessions: Array.isArray(securitySettings.activeSessions) ? securitySettings.activeSessions : [],
             },
-            apiKeys: [],
+            apiKeys,
             workspaceName: row.workspace_name || "Superblock Workspace",
+            preferences: {
+              tableDensity: preferences.tableDensity || "compact",
+              defaultDateRange: preferences.defaultDateRange || "Last 30 days",
+              autoRefresh: preferences.autoRefresh ?? true,
+            },
           },
         });
       }
@@ -1470,6 +1481,11 @@ app.post("/api/gateway-login", async (req, res) => {
           },
           apiKeys: [],
           workspaceName: "Superblock Workspace",
+          preferences: {
+            tableDensity: "compact",
+            defaultDateRange: "Last 30 days",
+            autoRefresh: true,
+          },
         },
       });
     } catch (error: any) {
@@ -1485,6 +1501,9 @@ app.post("/api/gateway-login", async (req, res) => {
 
       const notifications = body.notifications || {};
       const profile = body.profile || {};
+      const security = body.security || {};
+      const apiKeys = Array.isArray(body.apiKeys) ? body.apiKeys : (Array.isArray(body.api_keys) ? body.api_keys : []);
+      const preferences = body.preferences || {};
       const workspaceName = body.workspaceName || body.workspace_name;
       const timezone = profile.timezone || body.timezone;
 
@@ -1502,6 +1521,10 @@ app.post("/api/gateway-login", async (req, res) => {
           product_updates,
           timezone,
           workspace_name,
+          profile_data,
+          security_settings,
+          api_keys,
+          preferences,
           updated_at
         )
         VALUES (
@@ -1512,6 +1535,10 @@ app.post("/api/gateway-login", async (req, res) => {
           COALESCE($5, FALSE),
           COALESCE($6, 'utc'),
           COALESCE($7, 'Superblock Workspace'),
+          COALESCE($8::jsonb, '{}'::jsonb),
+          COALESCE($9::jsonb, '{}'::jsonb),
+          COALESCE($10::jsonb, '[]'::jsonb),
+          COALESCE($11::jsonb, '{}'::jsonb),
           NOW()
         )
         ON CONFLICT (user_id) DO UPDATE SET
@@ -1521,6 +1548,10 @@ app.post("/api/gateway-login", async (req, res) => {
           product_updates = COALESCE(EXCLUDED.product_updates, user_settings.product_updates),
           timezone = COALESCE(EXCLUDED.timezone, user_settings.timezone),
           workspace_name = COALESCE(EXCLUDED.workspace_name, user_settings.workspace_name),
+          profile_data = COALESCE(EXCLUDED.profile_data, user_settings.profile_data),
+          security_settings = COALESCE(EXCLUDED.security_settings, user_settings.security_settings),
+          api_keys = COALESCE(EXCLUDED.api_keys, user_settings.api_keys),
+          preferences = COALESCE(EXCLUDED.preferences, user_settings.preferences),
           updated_at = NOW()
         RETURNING *;
       `;
@@ -1532,18 +1563,27 @@ app.post("/api/gateway-login", async (req, res) => {
         productUpdates !== undefined ? productUpdates : null,
         timezone || null,
         workspaceName || null,
+        profile && Object.keys(profile).length > 0 ? JSON.stringify(profile) : null,
+        security && Object.keys(security).length > 0 ? JSON.stringify(security) : null,
+        apiKeys ? JSON.stringify(apiKeys) : null,
+        preferences && Object.keys(preferences).length > 0 ? JSON.stringify(preferences) : null,
       ]);
 
       const row = result.rows[0];
+      const profileData = (typeof row.profile_data === "object" && row.profile_data !== null) ? row.profile_data : {};
+      const securitySettings = (typeof row.security_settings === "object" && row.security_settings !== null) ? row.security_settings : {};
+      const returnedApiKeys = Array.isArray(row.api_keys) ? row.api_keys : [];
+      const returnedPrefs = (typeof row.preferences === "object" && row.preferences !== null) ? row.preferences : {};
+
       return res.json({
         success: true,
         settings: {
           profile: {
-            fullName: profile.fullName || "",
-            displayName: profile.displayName || "",
-            email: profile.email || "",
-            phone: profile.phone || "",
-            timezone: row.timezone || "utc",
+            fullName: profileData.fullName || profile.fullName || "",
+            displayName: profileData.displayName || profile.displayName || "",
+            email: profileData.email || profile.email || "",
+            phone: profileData.phone || profile.phone || "",
+            timezone: profileData.timezone || row.timezone || "utc",
           },
           notifications: {
             renewalAlerts: row.renewal_alerts,
@@ -1552,13 +1592,18 @@ app.post("/api/gateway-login", async (req, res) => {
             productUpdates: row.product_updates,
           },
           security: {
-            twoFactorEnabled: false,
-            loginAlerts: false,
-            sessionTimeoutHours: "8",
-            activeSessions: [],
+            twoFactorEnabled: securitySettings.twoFactorEnabled ?? security.twoFactorEnabled ?? false,
+            loginAlerts: securitySettings.loginAlerts ?? security.loginAlerts ?? false,
+            sessionTimeoutHours: securitySettings.sessionTimeoutHours || security.sessionTimeoutHours || "8",
+            activeSessions: Array.isArray(securitySettings.activeSessions) ? securitySettings.activeSessions : (security.activeSessions || []),
           },
-          apiKeys: [],
+          apiKeys: returnedApiKeys,
           workspaceName: row.workspace_name,
+          preferences: {
+            tableDensity: returnedPrefs.tableDensity || preferences.tableDensity || "compact",
+            defaultDateRange: returnedPrefs.defaultDateRange || preferences.defaultDateRange || "Last 30 days",
+            autoRefresh: returnedPrefs.autoRefresh ?? preferences.autoRefresh ?? true,
+          },
         },
       });
     } catch (error: any) {
